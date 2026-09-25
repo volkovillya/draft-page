@@ -14,3 +14,10 @@ export function parseClaudeRequest(text: string): { requested: boolean; instruct
   const requested = instruction.length >= 1 && instruction.length <= MAX_INSTRUCTION_LENGTH;
   return { requested, instruction: requested ? instruction : "" };
 }
+
+/** True when a message starts with "@Claude" but its instruction is longer than a request may be. */
+export function claudeInstructionTooLong(text: string): boolean {
+  const trimmed = text.trim();
+  const match = LEADING_MENTION.exec(trimmed);
+  return match !== null && trimmed.slice(match[0].length).trim().length > MAX_INSTRUCTION_LENGTH;
+}

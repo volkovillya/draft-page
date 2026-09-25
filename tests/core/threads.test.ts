@@ -158,9 +158,13 @@ describe("@Claude requests", () => {
     expect(await requested("@claude   ")).toBe(false);
   });
 
-  it("isn't requested when the instruction is over 4000 characters", async () => {
-    expect(await requested(`@Claude ${"x".repeat(4001)}`)).toBe(false);
+  it("refuses an instruction over 4000 characters instead of quietly dropping the request", async () => {
+    const { reviewer, page } = await setup();
+    const tooLong = open(reviewer, page, { text: `@Claude ${"x".repeat(4001)}` });
+    await expect(tooLong).rejects.toThrow("Instructions for Claude are limited to 4,000 characters");
     expect(await requested(`@Claude ${"x".repeat(4000)}`)).toBe(true);
+    // Without the mention, a long message is just a comment.
+    expect(await requested("x".repeat(4001))).toBe(false);
   });
 
   it("isn't requested by a mid-text mention", async () => {

@@ -21,7 +21,7 @@ export async function closeTestDb(): Promise<void> {
 
 export async function reset(): Promise<void> {
   await testDb().execute(
-    sql`TRUNCATE TABLE outbox_events, ai_jobs, messages, threads, page_versions, pages, members RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE ai_requests, outbox_events, ai_jobs, messages, threads, page_versions, pages, members RESTART IDENTITY CASCADE`,
   );
 }
 

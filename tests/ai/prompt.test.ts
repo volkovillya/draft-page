@@ -130,6 +130,24 @@ describe("validateEditedHtml", () => {
     permanent(() => validateEditedHtml(PAGE, "Just some words"), "The model didn't return an HTML page");
   });
 
+  it("sees through tricks that hide a handler, a script URL or a script", () => {
+    // A quoted ">" used to end the tag early for the handler check.
+    permanent(() => validateEditedHtml(PAGE, PAGE.replace("</body>", '<img alt=">" src=x onerror=alert(1)></body>')), "The edit tried to add an inline event handler");
+    // Character references and tabs in the scheme.
+    permanent(() => validateEditedHtml(PAGE, PAGE.replace("Hello", '<a href="jav&#x61;script:x()">Hello</a>')), "The edit tried to add a javascript: link");
+    permanent(() => validateEditedHtml(PAGE, PAGE.replace("Hello", '<a href="java\tscript&colon;x()">Hello</a>')), "The edit tried to add a javascript: link");
+    permanent(() => validateEditedHtml(PAGE, PAGE.replace("Hello", '<a href="data:text/html,<b>x</b>">Hello</a>')), "The edit tried to add a javascript: link");
+    // A whole page, scripts included, entity-encoded in srcdoc.
+    permanent(() => validateEditedHtml(PAGE, PAGE.replace("</body>", '<iframe srcdoc="&lt;script&gt;x()&lt;/script&gt;"></iframe></body>')), "The edit tried to add an embedded page");
+  });
+
+  it("refuses rewriting an existing script, but allows keeping it as it was", () => {
+    const withScript = PAGE.replace("</body>", "<script>track()</script></body>");
+    permanent(() => validateEditedHtml(withScript, withScript.replace("track()", "steal()")), "The edit tried to change a script");
+    const edited = withScript.replace("Hello", "Hi");
+    expect(validateEditedHtml(withScript, edited)).toBe(edited);
+  });
+
   it("refuses a new script, javascript: URL or inline handler", () => {
     permanent(() => validateEditedHtml(PAGE, PAGE.replace("</body>", "<SCRIPT>x()</SCRIPT></body>")));
     permanent(() => validateEditedHtml(PAGE, PAGE.replace("Hello", '<a href="JavaScript:x()">Hello</a>')));

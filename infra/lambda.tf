@@ -84,8 +84,10 @@ resource "aws_lambda_function" "ai_worker" {
   architectures    = ["arm64"] # Graviton: ~20% cheaper per GB-second
 
   memory_size = 256 # MB; plenty for HTTP calls (CPU scales with memory)
-  # A model edit can take a minute or two; the queue's visibility timeout is 6× this.
-  timeout = 180
+  # A full 32k-token reply can take several minutes. The model call gives up at 300 s
+  # (src/ai/bedrock-editor.ts), which leaves time for the claim and save calls; the queue's
+  # visibility timeout is 6× this.
+  timeout = 360
 
   environment {
     variables = {
@@ -94,6 +96,7 @@ resource "aws_lambda_function" "ai_worker" {
       DRAFTPAGE_AI_MAX_ATTEMPTS = "3" # = maxReceiveCount in the queue's redrive policy
       DRAFTPAGE_AI_EDITOR       = var.ai_editor
       DRAFTPAGE_AI_MODEL_ID     = var.ai_model_id
+      DRAFTPAGE_AI_REGION       = var.ai_region          # empty: the Lambda's own region
       NODE_OPTIONS              = "--enable-source-maps" # readable stack traces in the logs
     }
   }

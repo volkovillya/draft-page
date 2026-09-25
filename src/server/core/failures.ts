@@ -1,5 +1,5 @@
 /** Typed domain failures. Route handlers map `code` to an HTTP status. */
-export type FailureCode = "unauthenticated" | "not_allowed" | "missing" | "invalid" | "conflict";
+export type FailureCode = "unauthenticated" | "not_allowed" | "missing" | "invalid" | "conflict" | "too_many";
 
 export const httpStatusFor: Record<FailureCode, number> = {
   unauthenticated: 401,
@@ -7,6 +7,7 @@ export const httpStatusFor: Record<FailureCode, number> = {
   missing: 404,
   invalid: 400,
   conflict: 409,
+  too_many: 429,
 };
 
 export class Failure extends Error {
@@ -24,3 +25,4 @@ export const notAllowed = (msg = "You can't do that") => new Failure("not_allowe
 export const missing = (what: string) => new Failure("missing", `${what} not found`);
 export const invalid = (msg: string) => new Failure("invalid", msg);
 export const conflict = (msg: string) => new Failure("conflict", msg);
+export const tooMany = (msg: string) => new Failure("too_many", msg);

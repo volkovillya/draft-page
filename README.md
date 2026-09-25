@@ -66,6 +66,8 @@ npm run dev                       # http://localhost:6500
 | `DRAFTPAGE_AI_QUEUE_URL` | On AWS: the SQS queue the outbox relay publishes AI jobs to |
 | `DRAFTPAGE_WORKER_ROLE_ARN` | The IAM role allowed to call `/api/internal/*` (the worker Lambda's). The internal API is off when unset. |
 | `DRAFTPAGE_AI_EDITOR`, `DRAFTPAGE_AI_MODEL_ID`, `DRAFTPAGE_AI_REGION` | `fake` (default: no model, an invisible edit) or `bedrock` with a model or inference profile id |
+| `DRAFTPAGE_AI_LIMIT_PER_MEMBER`, `DRAFTPAGE_AI_LIMIT_TOTAL` | How many `@Claude` edits may start in any 24 hours, per person (default 10) and for everyone together (default 30). `0` turns AI edits off. |
+| `DRAFTPAGE_AI_MONTHLY_BUDGET_USD` | What `@Claude` edits may cost per calendar month, UTC (default `5`). The app also reads `DRAFTPAGE_AI_EDITOR` and `DRAFTPAGE_AI_MODEL_ID` to price each edit's worst case. |
 | `DRAFTPAGE_AI_FAKE_DELAY_MS` | Pretend thinking time for the fake editor, so the "working" state is visible locally |
 
 Secrets are never committed or baked into images. Locally they live in `.env.local`; on AWS they come from Secrets Manager at runtime.
@@ -112,18 +114,18 @@ browser ──HTTPS──▶ API Gateway (HTTP API) ──VPC Link──▶ Clou
 | Piece | Choice and why | ≈ $/month running |
 |---|---|---|
 | Network | VPC with public subnets (the task) and private subnets (RDS, no route to the internet). No NAT Gateway: the task has a public IPv4 for outbound calls only, and its security group accepts traffic only from the VPC Link. | 3.65 (IPv4) |
-| Entry point | API Gateway HTTP API: a stable HTTPS URL with an AWS-managed certificate, reaching the task privately through a VPC Link and Cloud Map. No load balancer. Throttled at 20 req/s (burst 50). | ≈ 0.60 |
-| Compute | ECS on Fargate, one 0.25 vCPU / 1 GB ARM64 task. Rolling deploys with an automatic rollback when the new task never gets healthy. | ≈ 8.50 |
+| Entry point | API Gateway HTTP API: a stable HTTPS URL with an AWS-managed certificate, reaching the task privately through a VPC Link and Cloud Map. No load balancer. Throttled at 5 req/s (burst 50). | ≈ 0.60 |
+| Compute | ECS on Fargate, one 0.25 vCPU / 1 GB ARM64 task. Rolling deploys with an automatic rollback when the new task never gets healthy. | ≈ 9.40 |
 | Database | RDS PostgreSQL 18, db.t4g.micro, single-AZ, 20 GB gp3, encrypted, private, deletion protection. | ≈ 14 |
 | Secrets | Secrets Manager: the Auth0 secrets (value written from the CLI, never in Terraform) and the RDS-managed admin password (rotated by RDS every 7 days). | 0.80 |
 | Database sign-in | The app connects as a limited `draftpage_app` user (data only, no DDL) with 15-minute IAM tokens from its task role. It has no password. The admin password is only used by the one-off migrate task. | 0 |
 | Images and logs | ECR (immutable tags, scan on push, keeps the last 5) and CloudWatch Logs (14 days). | < 0.60 |
-| AI queue | SQS standard queue (18 min visibility, long polling, SSE) plus a dead-letter queue after 3 failed receives. | ≈ 0 |
-| AI worker | Lambda, Node 24 on ARM64, 256 MB, 3 min timeout, outside the VPC, at most 2 at once. | ≈ 0 |
+| AI queue | SQS standard queue (36 min visibility, long polling, SSE) plus a dead-letter queue after 3 failed receives. | ≈ 0 |
+| AI worker | Lambda, Node 24 on ARM64, 256 MB, 6 min timeout, outside the VPC, at most 2 at once. | ≈ 0 |
 | Observability | CloudWatch Logs for the app, the worker and API Gateway access (14 days), and one alarm that emails when a job reaches the dead-letter queue. | ≈ 0.10 |
-| Cost guard | An AWS Budget with email alerts, counting usage before credits. | 0 |
+| Cost guards | Budgets, anomaly detection, hourly alarms and AI limits (see [Cost guards](#cost-guards)). | 0 |
 
-Total ≈ $28–29/month while running, ≈ $4/month paused.
+Total ≈ $29/month while running (eu-north-1 prices), ≈ $4/month paused. AI edits are extra: roughly $0.01–0.05 each with GPT-5.6 Luna.
 
 ### Day to day
 
@@ -152,16 +154,39 @@ reviewer: "@Claude make the heading green"
 - **Duplicates are harmless.** SQS delivers at least once. A job can only produce one version: completing a completed job returns the same version, concurrent completions are serialized by a row lock, and `(thread, base version, kind)` is unique.
 - **Failures are bounded and visible.** Temporary errors (throttling, timeouts) retry after ≈30 s and ≈2 min; the third attempt marks the job failed with a short reason shown on the thread. Permanent errors (refused, too large, invalid output) fail at once. A worker that crashes every time leaves the message in the dead-letter queue, which emails an alarm; jobs stuck over 30 minutes are failed by the relay.
 - **The AI only ever drafts.** The assistant actor can add a draft version to its own page and reply in its own thread. Publishing, resolving and deleting refuse it before touching the database.
-- **The model is behind one interface** (`HtmlEditorModel`): a Bedrock Converse editor and a deterministic fake. Page HTML, the quoted text and the instruction go to the model as clearly delimited untrusted data; results that add scripts, event handlers or `javascript:` links are rejected. Pages over 300 KiB are refused before any call.
+- **The model is behind one interface** (`HtmlEditorModel`): a Bedrock Converse editor and a deterministic fake. Page HTML, the quoted text and the instruction go to the model as clearly delimited untrusted data; results that add scripts, event handlers or `javascript:` links are rejected. Pages over 100 KiB are refused before any call (the whole page has to fit in a 32k-token reply), and each reply is capped at about 1.25× the page's size, so a small page can't turn into a huge, costly one.
+- **AI spending is capped in the app, then in AWS.** The app allows 10 `@Claude` edits per person and 30 in total in any 24 hours, and $5 of AI per calendar month. Each accepted request holds the most one attempt could cost (the biggest page in, the reply cap out: ≈ $0.05 with Luna), each retry holds another, and a finished edit's real cost replaces the last hold, so the budget can't be passed even while AWS billing lags. A request over any limit is refused with a 429 that says why and when to try again; the reviewer keeps their text. Requests are logged in `ai_requests`, which deleting a thread doesn't touch, so deleting and re-asking doesn't reset anything. Behind that, an AWS Budgets action attaches a "deny Bedrock" policy to the worker when a month's usage passes $40 (`infra/ai-kill-switch.tf`); it stays until reversed in the Budgets console.
 - **The worker never touches the database** (decision D11). It runs outside the VPC, so it reaches Bedrock without a NAT Gateway (~$33/month) or a Bedrock VPC endpoint (~$8/month), and reads and saves jobs through two internal endpoints. API Gateway accepts those only when signed with the worker's IAM role, then passes the verified caller to the app, which checks it again.
 - **The UI polls** this version's threads every 2 s, only while a job is active and the tab is visible. API Gateway HTTP APIs buffer responses, so a push channel would need a separate WebSocket API; polling costs a few requests per edit.
 
 ### Switching to a real model (after leaving the Free plan)
 
-1. Check the model answers from the account: a tiny Converse call with `aws bedrock-runtime converse --profile draftpage --region eu-north-1 --model-id <id> …`.
-2. Add `bedrock:InvokeModel` for exactly that model or inference profile to the worker role (`infra/lambda.tf`).
-3. Set `ai_editor = "bedrock"` and `ai_model_id = "<id>"` in `infra/terraform.tfvars`, then plan + apply.
-4. Write an `@Claude` comment on a test page and read `/aws/lambda/draftpage-ai-worker` for the tokens, cost and latency of the job.
+Order matters: the app's AI limits must be running on AWS before the worker can call a paid model.
+
+1. **Deploy first.** `npm run aws:deploy` with the code that has the daily limits and the monthly AI budget (migrations `0004`, `0005`).
+2. **Check the model from the account:** a tiny `aws bedrock-runtime converse --profile draftpage --region <region> --model-id <id> …` call. Note the exact id, whether `temperature` is accepted, and the price on the Bedrock pricing page (update `PRICES` in `src/ai/bedrock-editor.ts` if it differs).
+3. **Allow exactly that model:** add `bedrock:InvokeModel` for its foundation-model ARN to the worker role in `infra/lambda.tf` (for an inference profile: the profile ARN plus the model ARNs, with a `bedrock:InferenceProfileArn` condition). Never `*`.
+4. **Switch:** in `infra/terraform.tfvars` set `ai_editor = "bedrock"`, `ai_model_id = "<id>"` and, for a model outside the home region, `ai_region` (GPT-5.6 Luna: `us-east-1`). Plan + apply: this updates the Lambda and the app together, so the app prices each edit's hold for the monthly budget.
+5. **Try one edit** and read `/aws/lambda/draftpage-ai-worker` for its tokens, cost and latency.
+6. **After the first Bedrock charge shows up** in Cost Explorer, note the service name it's billed under and narrow `infra/ai-kill-switch.tf` to AI costs only.
+
+Also after the upgrade: raise `backup_retention_period` to 7 in `infra/rds.tf` (the Free plan caps it at 1).
+
+### Cost guards
+
+| Guard | What it does | Where |
+|---|---|---|
+| Daily AI limits | 10 `@Claude` edits per person, 30 in total, per rolling 24 hours | app |
+| Monthly AI budget | $5 of AI per calendar month. Each attempt holds its worst case (≤160 KiB of prompt, 32k tokens out) until the real cost is known; retries are re-checked against the budget and capped at 3 by the server; the SDK never retries on its own; timeouts aren't retried; a model without a price is refused | app |
+| Size caps | Pages over 100 KiB refused before a job is created; reply capped at ≈1.25× the page | app |
+| AI kill switch | Month's usage over $40 → a "deny Bedrock" policy on the worker (reverse it in Budgets) | `infra/ai-kill-switch.tf` |
+| Budgets | Email when a day passes $2, a month passes $35, or a month is forecast past $40 (before credits and tax) | `infra/budget.tf` |
+| Anomaly detection | Daily email when a day costs ≥ $5 more than usual (needs ~10 days of history per service) | `infra/cost-guards.tf` |
+| Hourly alarms | Email within the hour: > 10,000 requests, > 1 GB served, or the database paying for extra CPU | `infra/cost-guards.tf` |
+| Database auto-start | Email whenever RDS starts; when RDS restarts a paused database on its own after 7 days, it's stopped again automatically | `infra/cost-guards.tf` |
+| Throttling | 5 requests/s sustained, burst 50, at API Gateway. It limits requests, not bytes: a bot pulling the largest public JS file at the ceiling for a month would cost ≈ $260 in data transfer, which the hourly alarm reports within the hour | `infra/apigw.tf` |
+
+None of these stops the fixed costs (≈ $29/month running); `npm run aws:pause` does. AWS has no automatic spending cap on the Paid plan, so the alarms are there to tell you in time to pause.
 
 ## Security decisions
 

@@ -168,6 +168,29 @@ export const aiJobs = pgTable(
 );
 
 /**
+ * One row per accepted "@Claude" request, for the daily AI limits. Kept apart from ai_jobs
+ * on purpose: deleting a thread deletes its job, and must not give the allowance back.
+ * job_id has no foreign key for the same reason.
+ */
+export const aiRequests = pgTable(
+  "ai_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => members.id),
+    jobId: uuid("job_id").notNull(),
+    // For the monthly AI budget: the most one attempt can cost, held until the real cost is
+    // known. Each retry holds another; completion replaces the last attempt's hold with cost_usd.
+    reservedUsd: numeric("reserved_usd", { precision: 10, scale: 6 }).notNull().default("0"),
+    attempts: integer("attempts").notNull().default(1),
+    costUsd: numeric("cost_usd", { precision: 10, scale: 6 }),
+    createdAt: ts("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("ai_requests_created_ix").on(t.createdAt), index("ai_requests_job_ix").on(t.jobId)],
+);
+
+/**
  * Transactional outbox (§23): a row written in the same transaction as the change it
  * announces. The relay publishes undispatched rows to SQS and stamps dispatched_at, so a
  * crash between the commit and the publish loses nothing.

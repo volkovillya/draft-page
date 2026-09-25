@@ -1,6 +1,7 @@
-import { BedrockHtmlEditor } from "./bedrock-editor";
+import { BedrockHtmlEditor, DEFAULT_MAX_OUTPUT_TOKENS, estimateCostUsd } from "./bedrock-editor";
 import { FakeHtmlEditor } from "./fake-editor";
 import type { HtmlEditorModel } from "./html-editor";
+import { MAX_PROMPT_BYTES } from "./prompt";
 
 export { AiEditError } from "./html-editor";
 export type { HtmlEditInput, HtmlEditResult, HtmlEditorModel } from "./html-editor";
@@ -20,4 +21,22 @@ export function createHtmlEditor(env: Record<string, string | undefined>): HtmlE
     return new BedrockHtmlEditor({ region, modelId });
   }
   throw new Error(`Unknown DRAFTPAGE_AI_EDITOR "${kind}" (expected "fake" or "bedrock")`);
+}
+
+/** An upper bound on one attempt's input tokens: tokens never exceed bytes, and the prompt is capped. */
+const WORST_INPUT_TOKENS = MAX_PROMPT_BYTES;
+
+/**
+ * The most one edit attempt can cost with the configured editor: the largest prompt in and
+ * the reply cap out. The monthly AI budget holds this until an edit's real cost is known.
+ * A model without a price is refused, so the budget can never be guessed low.
+ */
+export function worstCaseEditCostUsd(env: Record<string, string | undefined>): number {
+  if ((env.DRAFTPAGE_AI_EDITOR || "fake") === "fake") return 0;
+  const modelId = env.DRAFTPAGE_AI_MODEL_ID ?? "";
+  const cost = estimateCostUsd(modelId, WORST_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS);
+  if (cost === null) {
+    throw new Error(`No price for AI model "${modelId}": add it to PRICES in src/ai/bedrock-editor.ts before using it`);
+  }
+  return cost;
 }

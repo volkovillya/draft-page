@@ -2,18 +2,30 @@ import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-r
 import type { ConverseResponse } from "@aws-sdk/client-bedrock-runtime";
 import { AiEditError } from "./html-editor";
 import type { HtmlEditInput, HtmlEditorModel, HtmlEditResult } from "./html-editor";
-import { assertInputSize, buildEditPrompt, parseEditReply, validateEditedHtml } from "./prompt";
+import { assertInputSize, assertPromptSize, buildEditPrompt, byteLength, parseEditReply, validateEditedHtml } from "./prompt";
 
-const DEFAULT_MAX_OUTPUT_TOKENS = 32000;
-const DEFAULT_TIMEOUT_MS = 120_000;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 32000;
+const MIN_OUTPUT_TOKENS = 8000;
+// A full 32k-token reply can take minutes. Must stay below the Lambda timeout (infra/lambda.tf).
+const DEFAULT_TIMEOUT_MS = 300_000;
 
-/** USD per 1M tokens, matched by substring so regional/inference-profile prefixes still hit. */
+/**
+ * USD per 1M tokens, matched by substring so regional/inference-profile prefixes still hit.
+ * Haiku: AWS price list, global profile (2026-09-25). Luna isn't in the price list yet; this is
+ * the post-July-2026 price quoted by third parties. Check the Bedrock pricing page when switching.
+ */
 const PRICES: { match: string; input: number; output: number }[] = [
-  { match: "gpt-5.6-luna", input: 0.2, output: 1.2 },
+  { match: "gpt-5.6-luna", input: 0.22, output: 1.32 },
   { match: "claude-haiku-4-5", input: 1.0, output: 5.0 },
 ];
 
 const BUSY = "The AI service is busy or unavailable right now";
+const TOO_SLOW = "The model took too long to finish this edit";
+/**
+ * Timeouts aren't retried: the model may have produced (and billed) most of a reply, and the
+ * same page would most likely time out again.
+ */
+const TIMEOUT_NAMES = new Set(["TimeoutError", "AbortError", "ModelTimeoutException"]);
 const UNAVAILABLE = "The AI model isn't available for this account";
 
 const RETRYABLE_NAMES = new Set([
@@ -21,10 +33,7 @@ const RETRYABLE_NAMES = new Set([
   "ServiceUnavailableException",
   "InternalServerException",
   "ModelNotReadyException",
-  "ModelTimeoutException",
   "ServiceQuotaExceededException",
-  "TimeoutError",
-  "AbortError",
 ]);
 const UNAVAILABLE_NAMES = new Set(["AccessDeniedException", "ValidationException", "ResourceNotFoundException"]);
 const NETWORK_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EPIPE"]);
@@ -36,10 +45,21 @@ export function estimateCostUsd(modelId: string, inputTokens: number | null, out
   return Math.round(usd * 1e6) / 1e6;
 }
 
+/**
+ * The reply budget for one edit: the page back (HTML runs ≈3–4 bytes a token; 3 leaves room)
+ * plus a quarter more and some headroom for new content, within [8k, max]. So a small page
+ * asked to become "the longest page in the world" stops at a small, cheap reply.
+ */
+export function outputTokenBudget(pageBytes: number, max = DEFAULT_MAX_OUTPUT_TOKENS): number {
+  const pageTokens = Math.ceil(pageBytes / 3);
+  return Math.min(max, Math.max(MIN_OUTPUT_TOKENS, Math.ceil(pageTokens * 1.25) + 4000));
+}
+
 /** Maps SDK/network failures to user-safe errors; the original error (and its request id) is dropped. */
 function toAiEditError(error: unknown): AiEditError {
   if (error instanceof AiEditError) return error;
   const e = (error ?? {}) as { name?: string; code?: string; $metadata?: { httpStatusCode?: number } };
+  if (e.name && TIMEOUT_NAMES.has(e.name)) return new AiEditError(TOO_SLOW, false);
   if (e.name && RETRYABLE_NAMES.has(e.name)) return new AiEditError(BUSY, true);
   if (e.code && NETWORK_CODES.has(e.code)) return new AiEditError(BUSY, true);
   if (e.name && UNAVAILABLE_NAMES.has(e.name)) return new AiEditError(UNAVAILABLE, false);
@@ -79,7 +99,9 @@ export class BedrockHtmlEditor implements HtmlEditorModel {
     maxOutputTokens?: number;
     timeoutMs?: number;
   }) {
-    this.client = options.client ?? new BedrockRuntimeClient({ region: options.region });
+    // maxAttempts 1: the SDK must not quietly retry a (possibly billed) call. Retries go
+    // through the job queue, where the monthly AI budget counts each attempt.
+    this.client = options.client ?? new BedrockRuntimeClient({ region: options.region, maxAttempts: 1 });
     this.modelId = options.modelId;
     this.maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -88,6 +110,7 @@ export class BedrockHtmlEditor implements HtmlEditorModel {
   async edit(input: HtmlEditInput): Promise<HtmlEditResult> {
     assertInputSize(input.html);
     const { system, user } = buildEditPrompt(input);
+    assertPromptSize({ system, user });
     const started = performance.now();
 
     let response: ConverseResponse;
@@ -97,7 +120,7 @@ export class BedrockHtmlEditor implements HtmlEditorModel {
           modelId: this.modelId,
           system: [{ text: system }],
           messages: [{ role: "user", content: [{ text: user }] }],
-          inferenceConfig: { maxTokens: this.maxOutputTokens, temperature: 0 },
+          inferenceConfig: { maxTokens: outputTokenBudget(byteLength(input.html), this.maxOutputTokens), temperature: 0 },
         }),
         { abortSignal: AbortSignal.timeout(this.timeoutMs) },
       );

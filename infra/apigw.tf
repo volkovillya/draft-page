@@ -5,7 +5,7 @@
 # This part creates only the API and its stage, which gives DraftPage a permanent URL with
 # a TLS certificate managed by AWS: https://<id>.execute-api.eu-north-1.amazonaws.com
 # The route to the app (VPC Link, Cloud Map, integration) comes in 8d. Until then every
-# request gets a 404 from API Gateway. Cost: $1 per million requests, so ≈ $0 here.
+# request gets a 404 from API Gateway. Cost: $1.06 per million requests, so ≈ $0 here.
 
 resource "aws_apigatewayv2_api" "web" {
   name          = "draftpage"
@@ -22,9 +22,13 @@ resource "aws_apigatewayv2_stage" "default" {
   auto_deploy = true
 
   # A ceiling on traffic, so a runaway client or bot can't run up the bill or overload the
-  # single small task. Far above what one person needs.
+  # single small task. 5/s sustained is still well above what a few reviewers need (a page
+  # load is a short burst, which the burst allowance absorbs). The ceiling limits requests,
+  # not bytes: a bot pulling the largest public JS file (~230 KB) at 5/s for a month would
+  # move ~3 TB (≈ $260 of data transfer), so the hourly traffic alarms in cost-guards.tf
+  # email within the hour; pause the app (npm run aws:pause) if one fires unexpectedly.
   default_route_settings {
-    throttling_rate_limit  = 20 # requests per second, sustained
+    throttling_rate_limit  = 5 # requests per second, sustained
     throttling_burst_limit = 50
   }
 

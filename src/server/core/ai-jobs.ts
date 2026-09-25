@@ -5,6 +5,9 @@ import { aiJobs, outboxEvents, pageVersions } from "../db/tables";
 /** Outbox topic for a new edit job; its payload is only the job id (pages can exceed a queue message). */
 export const AI_JOB_REQUESTED = "ai_job.requested";
 
+/** At most this many model attempts per job (= maxReceiveCount of the queue's redrive policy on AWS). */
+export const MAX_JOB_ATTEMPTS = 3;
+
 export type AiJobStatus = (typeof aiJobs.$inferSelect)["status"];
 
 /** What a thread shows about its AI request. The error is a short, user-safe sentence. */

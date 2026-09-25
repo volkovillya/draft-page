@@ -179,21 +179,22 @@ test.describe("pinned comment threads", () => {
     await expect(page.locator("header button[aria-haspopup=menu]")).toContainText("v1"); // and no jump to v2
   });
 
-  test("a failed @Claude request says why", async ({ page }) => {
-    // Bigger than the AI input limit (300 KiB), so the editor refuses it. Too heavy to click
-    // around in, so the thread is opened through the API and checked in the rail.
-    const big = `<!doctype html><html><body><h1>Big</h1><p>${"lorem ipsum ".repeat(28_000)}</p></body></html>`;
+  test("an @Claude request on a page too large for AI is refused up front, before any model call", async ({ page }) => {
+    // Bigger than the AI input limit (100 KiB). Too heavy to click around in, so the thread
+    // is opened through the API.
+    const big = `<!doctype html><html><body><h1>Big</h1><p>${"lorem ipsum ".repeat(10_000)}</p></body></html>`;
     const { shortId } = await createPage(page, big);
     const { versionId } = (await (await page.request.get(`/api/pages/${shortId}/threads`)).json()) as { versionId: string };
     const opened = await page.request.post(`/api/pages/${shortId}/threads`, {
       data: { versionId, posX: 0.1, posY: 0.1, text: "@Claude shorten this" },
     });
-    expect(opened.status()).toBe(201);
-
-    await page.goto(`/pages/${shortId}`);
-    const chip = page.getByRole("complementary", { name: "Comments" }).getByText("Claude couldn't do this");
-    await expect(chip).toBeVisible({ timeout: 15_000 });
-    await expect(chip).toHaveAttribute("title", "This page is too large for an AI edit");
+    expect(opened.status()).toBe(400);
+    expect(((await opened.json()) as { error: { message: string } }).error.message).toContain("This page is too large for an AI edit");
+    // Without the mention it's an ordinary comment.
+    const plain = await page.request.post(`/api/pages/${shortId}/threads`, {
+      data: { versionId, posX: 0.1, posY: 0.1, text: "shorten this" },
+    });
+    expect(plain.status()).toBe(201);
   });
 
   test("the composer's Send to Claude checkbox and the @Claude text stay in sync", async ({ page }) => {

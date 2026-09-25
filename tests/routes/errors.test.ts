@@ -69,6 +69,7 @@ describe("failure mapping", () => {
     ["missing", 404],
     ["invalid", 400],
     ["conflict", 409],
+    ["too_many", 429],
   ];
 
   it.each(cases)("maps a core %s failure to HTTP %i", async (code, status) => {

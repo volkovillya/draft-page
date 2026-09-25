@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
-import { BedrockHtmlEditor, estimateCostUsd } from "@/ai/bedrock-editor";
+import { BedrockHtmlEditor, estimateCostUsd, outputTokenBudget } from "@/ai/bedrock-editor";
 import { AiEditError } from "@/ai/html-editor";
 import { MAX_AI_INPUT_BYTES } from "@/ai/prompt";
 
@@ -50,13 +50,13 @@ describe("BedrockHtmlEditor", () => {
       model: LUNA,
       inputTokens: 1000,
       outputTokens: 500,
-      estimatedCostUsd: 0.0008,
+      estimatedCostUsd: 0.00088, // 1000 × $0.22 + 500 × $1.32 per 1M
     });
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
 
     const [command, options] = send.mock.calls[0] as [ConverseCommand, { abortSignal: AbortSignal }];
     expect(command.input.modelId).toBe(LUNA);
-    expect(command.input.inferenceConfig).toEqual({ maxTokens: 32000, temperature: 0 });
+    expect(command.input.inferenceConfig).toEqual({ maxTokens: 8000, temperature: 0 }); // small page: the floor
     expect(command.input.system?.[0]?.text).toContain("UNTRUSTED DATA");
     expect(command.input.messages?.[0]?.content?.[0]?.text).toContain(`<page_html>\n${PAGE}\n</page_html>`);
     expect(options.abortSignal).toBeInstanceOf(AbortSignal);
@@ -73,8 +73,24 @@ describe("BedrockHtmlEditor", () => {
     expect(await caught(editorWith(send).edit(input()))).toMatchObject({ retryable: false, message: "The model declined this request" });
   });
 
-  it("retries throttling, 5xx and timeouts", async () => {
-    for (const error of [awsError("ThrottlingException", 429), awsError("InternalServerException", 500), awsError("TimeoutError")]) {
+  it("doesn't retry a timeout, which may already have been billed", async () => {
+    for (const name of ["TimeoutError", "AbortError", "ModelTimeoutException"]) {
+      const result = await caught(editorWith(vi.fn().mockRejectedValue(awsError(name))).edit(input()));
+      expect(result).toMatchObject({ retryable: false, message: "The model took too long to finish this edit" });
+    }
+  });
+
+  it("refuses a prompt over the cap before calling the model", async () => {
+    const send = vi.fn();
+    // The page itself is within its limit; the whole prompt isn't.
+    const html = `<p>${"a".repeat(MAX_AI_INPUT_BYTES - 10)}</p>`;
+    const error = await caught(editorWith(send).edit({ ...input(html), instruction: "b".repeat(70_000) }));
+    expect(error).toMatchObject({ retryable: false, message: "This page is too large for an AI edit" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("retries throttling and 5xx", async () => {
+    for (const error of [awsError("ThrottlingException", 429), awsError("InternalServerException", 500)]) {
       const result = await caught(editorWith(vi.fn().mockRejectedValue(error)).edit(input()));
       expect(result).toMatchObject({ retryable: true, message: "The AI service is busy or unavailable right now" });
     }
@@ -101,10 +117,33 @@ describe("BedrockHtmlEditor", () => {
   });
 });
 
+describe("outputTokenBudget", () => {
+  it("gives a small page the 8k floor, so it can't grow into a huge reply", () => {
+    expect(outputTokenBudget(0)).toBe(8000);
+    expect(outputTokenBudget(5 * 1024)).toBe(8000);
+  });
+
+  it("grows with the page: its size back plus a quarter and some headroom", () => {
+    expect(outputTokenBudget(30_000)).toBe(16_500); // 10k page tokens × 1.25 + 4k
+  });
+
+  it("never passes the maximum, even for the largest allowed page", () => {
+    expect(outputTokenBudget(MAX_AI_INPUT_BYTES)).toBe(32_000);
+    expect(outputTokenBudget(30_000, 12_000)).toBe(12_000);
+  });
+
+  it("is what the editor sends for a mid-size page", async () => {
+    const send = vi.fn().mockResolvedValue(converse(`<summary>x</summary><edited_html>${EDITED}</edited_html>`));
+    await editorWith(send).edit({ ...input(), html: `<html><body>${"a".repeat(30_000 - 26)}</body></html>` });
+    const [command] = send.mock.calls[0] as [ConverseCommand];
+    expect(command.input.inferenceConfig?.maxTokens).toBe(16_500);
+  });
+});
+
 describe("estimateCostUsd", () => {
   it("prices known models and rounds to 6 decimals", () => {
     expect(estimateCostUsd("us.anthropic.claude-haiku-4-5-20251001-v1:0", 1234, 567)).toBe(0.004069);
-    expect(estimateCostUsd(LUNA, 1, 1)).toBe(0.000001);
+    expect(estimateCostUsd(LUNA, 1, 1)).toBe(0.000002); // $0.00000154, rounded to 6 places
   });
 
   it("returns null for unknown models or missing usage", () => {

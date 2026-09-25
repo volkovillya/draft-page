@@ -7,7 +7,8 @@ import type { OutboxMessage, Publisher } from "./relay";
 import { retryDelayMs } from "./relay";
 
 /** Same limit as the queue's redrive policy on AWS: the third failed attempt is the last. */
-export const MAX_JOB_ATTEMPTS = 3;
+export { MAX_JOB_ATTEMPTS } from "../core/ai-jobs";
+import { MAX_JOB_ATTEMPTS } from "../core/ai-jobs";
 
 function jobIdOf(message: OutboxMessage): string {
   const jobId = (message.payload as { jobId?: unknown } | null)?.jobId;

@@ -62,4 +62,30 @@ test.describe("comment composer opens and closes the way people expect", () => {
     await expect(page.getByRole("complementary", { name: "Comments" })).toContainText(/Sent to Claude|Claude is editing|Claude made v2/);
     await expect(page.getByRole("button", { name: /Thread 1, open/ })).toBeVisible();
   });
+
+  test("a refused @Claude request (daily limit) shows why and keeps the text", async ({ page }) => {
+    // The limit itself is covered by unit tests; here the server's 429 is simulated so the
+    // suite's shared member never runs out.
+    const reason = 'You\'ve used your 10 AI edits for the last 24 hours. Try again in about 3 hours. To post it as a normal comment, remove "@Claude".';
+    await page.route("**/api/pages/*/threads", (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({ status: 429, contentType: "application/json", body: JSON.stringify({ error: { code: "too_many", message: reason } }) })
+        : route.continue(),
+    );
+    await openFromSelection(page);
+    await page.keyboard.type("make this text bold");
+    await page.getByText("Send to Claude").click();
+    await page.keyboard.press("Enter");
+    await expect(composer(page)).toContainText(reason);
+    await expect(composer(page).locator("textarea")).toHaveValue(/make this text bold/);
+    await expect(page.getByRole("button", { name: /Thread 1, open/ })).toHaveCount(0);
+  });
+
+  test("an @Claude instruction over 4,000 characters is refused, not quietly posted without Claude", async ({ page }) => {
+    await openFromSelection(page);
+    await composer(page).locator("textarea").fill(`@Claude ${"x".repeat(4001)}`);
+    await page.keyboard.press("Enter");
+    await expect(composer(page)).toContainText("Instructions for Claude are limited to 4,000 characters");
+    await expect(page.getByRole("button", { name: /Thread 1, open/ })).toHaveCount(0);
+  });
 });

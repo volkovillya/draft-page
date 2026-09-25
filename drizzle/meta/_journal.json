@@ -29,6 +29,20 @@
       "when": 1790347295448,
       "tag": "0003_ai_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790355552463,
+      "tag": "0004_ai_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790356950960,
+      "tag": "0005_ai_budget",
+      "breakpoints": true
     }
   ]
 }

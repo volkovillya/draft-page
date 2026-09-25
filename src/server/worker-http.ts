@@ -8,6 +8,8 @@ import { errorResponse } from "./http";
  */
 export const WORKER_IDENTITY_HEADER = "x-draftpage-caller-arn";
 
+const SESSION_NAME = /^[\w+=.@-]{2,64}$/;
+
 type Handler<C> = (request: Request, context: C) => Promise<Response>;
 
 /**
@@ -20,7 +22,8 @@ export function withWorker<C>(handler: Handler<C>) {
     const expected = assumedRolePrefix(process.env.DRAFTPAGE_WORKER_ROLE_ARN);
     if (!expected) return NextResponse.json({ error: { code: "missing", message: "Not found" } }, { status: 404 });
     const caller = request.headers.get(WORKER_IDENTITY_HEADER) ?? "";
-    if (!caller.startsWith(expected)) {
+    // Exactly one assumed-role session name after the prefix: nothing appended (no commas).
+    if (!caller.startsWith(expected) || !SESSION_NAME.test(caller.slice(expected.length))) {
       return NextResponse.json({ error: { code: "not_allowed", message: "Worker only" } }, { status: 403 });
     }
     try {

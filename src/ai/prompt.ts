@@ -1,8 +1,18 @@
 import { AiEditError } from "./html-editor";
 import type { HtmlEditInput } from "./html-editor";
 
-/** Bigger pages cost too much and rarely come back intact, so they're refused before any call. */
-export const MAX_AI_INPUT_BYTES = 300 * 1024;
+/**
+ * The model returns the whole page, and a reply is capped at 32k tokens (≈100 KiB of HTML).
+ * A bigger page could never come back complete, so it's refused before any (billed) call.
+ */
+export const MAX_AI_INPUT_BYTES = 100 * 1024;
+
+/**
+ * The whole prompt as sent: the page after delimiter escaping (which can grow it), the
+ * instruction, quote, pin and rules. Tokens never exceed bytes, so this also bounds the
+ * input tokens the monthly AI budget holds per attempt.
+ */
+export const MAX_PROMPT_BYTES = 160 * 1024;
 
 const MAX_EDITED_BYTES = 2 * 1024 * 1024;
 const MAX_SUMMARY_LENGTH = 500;
@@ -42,6 +52,12 @@ export function assertInputSize(html: string): void {
   if (byteLength(html) > MAX_AI_INPUT_BYTES) throw new AiEditError("This page is too large for an AI edit", false);
 }
 
+export function assertPromptSize(prompt: { system: string; user: string }): void {
+  if (byteLength(prompt.system) + byteLength(prompt.user) > MAX_PROMPT_BYTES) {
+    throw new AiEditError("This page is too large for an AI edit", false);
+  }
+}
+
 export function buildEditPrompt(input: HtmlEditInput): { system: string; user: string } {
   const sections = [`<page_html>\n${neutralizeDelimiters(input.html)}\n</page_html>`];
   if (input.excerpt) sections.push(`<quoted_excerpt>\n${neutralizeDelimiters(input.excerpt)}\n</quoted_excerpt>`);
@@ -77,20 +93,42 @@ function toPlainText(text: string): string {
   return plain.length > MAX_SUMMARY_LENGTH ? `${plain.slice(0, MAX_SUMMARY_LENGTH - 1)}…` : plain;
 }
 
-function countScripts(html: string): number {
-  return html.match(/<script\b/gi)?.length ?? 0;
+/** Every script element as written (attributes and body), so rewriting an existing one counts as a change. */
+function scripts(html: string): string[] {
+  return html.match(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi) ?? [];
 }
 
-function countJavascriptUrls(html: string): number {
-  return html.match(/javascript\s*:/gi)?.length ?? 0;
+/** Opening tags, reading quoted attribute values whole, so `alt=">"` can't end a tag early. */
+function tags(html: string): string[] {
+  return html.match(/<[a-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/gi) ?? [];
+}
+
+/** Undoes character references, which browsers decode in attributes before using them. */
+function decodeEntities(text: string): string {
+  const named: Record<string, string> = { colon: ":", tab: "\t", newline: "\n", lpar: "(", rpar: ")", sol: "/", amp: "&" };
+  return text
+    .replace(/&#x([0-9a-f]+);?/gi, (_, hex: string) => String.fromCodePoint(Math.min(Number.parseInt(hex, 16), 0x10ffff)))
+    .replace(/&#(\d+);?/g, (_, dec: string) => String.fromCodePoint(Math.min(Number(dec), 0x10ffff)))
+    .replace(/&([a-z]+);/gi, (whole, name: string) => named[name.toLowerCase()] ?? whole);
+}
+
+/** Script-running URLs, also when hidden with character references or tabs/newlines (which browsers ignore). */
+function countScriptUrls(html: string): number {
+  const plain = decodeEntities(html).replace(/[\t\n\r]/g, "");
+  return plain.match(/(?:java|vb)script\s*:|data\s*:\s*text\/html/gi)?.length ?? 0;
 }
 
 /** Counts on*= attributes inside tags only, so prose like "one = two" doesn't count. */
 function countEventHandlers(html: string): number {
   let count = 0;
-  for (const tag of html.match(/<[a-z][^>]*>/gi) ?? []) {
-    count += tag.match(/[\s"'/]on\w+\s*=/gi)?.length ?? 0;
-  }
+  for (const tag of tags(html)) count += tag.match(/[\s"'/]on\w+\s*=/gi)?.length ?? 0;
+  return count;
+}
+
+/** srcdoc holds a whole page (scripts included), entity-encoded where the checks above can't see it. */
+function countSrcdoc(html: string): number {
+  let count = 0;
+  for (const tag of tags(html)) count += tag.match(/[\s"'/]srcdoc\s*=/gi)?.length ?? 0;
   return count;
 }
 
@@ -100,10 +138,13 @@ export function validateEditedHtml(original: string, edited: string): string {
   if (byteLength(edited) > MAX_EDITED_BYTES) throw new AiEditError("The edited page is too large", false);
   if (edited.trim() === original.trim()) throw new AiEditError("The model returned the page unchanged", false);
   if (!/<[a-z!/]/i.test(edited)) throw new AiEditError("The model didn't return an HTML page", false);
-  if (countScripts(edited) > countScripts(original)) throw new AiEditError("The edit tried to add a script", false);
-  if (countJavascriptUrls(edited) > countJavascriptUrls(original)) {
+  const [before, after] = [scripts(original), scripts(edited)];
+  if (after.length > before.length) throw new AiEditError("The edit tried to add a script", false);
+  if (after.some((script) => !before.includes(script))) throw new AiEditError("The edit tried to change a script", false);
+  if (countScriptUrls(edited) > countScriptUrls(original)) {
     throw new AiEditError("The edit tried to add a javascript: link", false);
   }
+  if (countSrcdoc(edited) > countSrcdoc(original)) throw new AiEditError("The edit tried to add an embedded page", false);
   if (countEventHandlers(edited) > countEventHandlers(original)) {
     throw new AiEditError("The edit tried to add an inline event handler", false);
   }

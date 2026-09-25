@@ -6,7 +6,8 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Db, Tx } from "../db/connection";
 import { aiJobs, messages, pageVersions, threads } from "../db/tables";
 import type { AssistantActor } from "./actor";
-import type { AiJobStatus } from "./ai-jobs";
+import { MAX_JOB_ATTEMPTS, type AiJobStatus } from "./ai-jobs";
+import { aiLimitsFromEnv, chargeAiAttempt, settleAiCost, type AiLimits } from "./ai-limits";
 import { parseClaudeRequest } from "./claude-trigger";
 import { conflict, invalid, missing } from "./failures";
 import { requireHtml, requireText, requireUuid } from "./guards";
@@ -31,7 +32,7 @@ export type ClaimResult = { state: "ready"; job: ClaimedJob } | { state: "done";
  * A finished job is reported as done, so a duplicate SQS delivery does no work. A job whose
  * thread was resolved or whose request can't be read is failed here, before any model call.
  */
-export async function claimJob(db: Db, jobId: string): Promise<ClaimResult> {
+export async function claimJob(db: Db, jobId: string, limits: AiLimits = aiLimitsFromEnv()): Promise<ClaimResult> {
   requireUuid(jobId, "Job");
   return db.transaction(async (tx) => {
     const [row] = await tx
@@ -61,6 +62,25 @@ export async function claimJob(db: Db, jobId: string): Promise<ClaimResult> {
         : "The request could not be read";
     if (refusal) {
       await markFailed(tx, jobId, refusal);
+      if (job.attemptCount === 0) await settleAiCost(tx, jobId, "0"); // no model call was made
+      return { state: "done", status: "failed" };
+    }
+
+    // The server's own cap, whatever the queue does (duplicate deliveries, a manual DLQ redrive).
+    const attempt = job.attemptCount + 1;
+    if (attempt > MAX_JOB_ATTEMPTS) {
+      await markFailed(tx, jobId, `Claude couldn't finish this edit in ${MAX_JOB_ATTEMPTS} attempts`);
+      return { state: "done", status: "failed" };
+    }
+    const charge = await chargeAiAttempt(tx, jobId, attempt, limits);
+    if (charge !== "ok") {
+      await markFailed(
+        tx,
+        jobId,
+        charge === "over_budget"
+          ? "This month's AI budget ran out before Claude could try again"
+          : "Claude couldn't start this edit",
+      );
       return { state: "done", status: "failed" };
     }
 
@@ -115,6 +135,7 @@ export async function completeJob(
   const summary = requireText(input.summary, "Summary", 1, MAX_SUMMARY_LENGTH);
   const provider = requireText(input.provider, "Provider", 1, 50);
   const model = requireText(input.model, "Model", 1, 200);
+  const cost = optionalCost(input.estimatedCostUsd);
 
   return db.transaction(async (tx) => {
     const [job] = await tx.select().from(aiJobs).where(eq(aiJobs.id, jobId)).for("update");
@@ -148,12 +169,13 @@ export async function completeJob(
         model,
         inputTokens: optionalCount(input.inputTokens),
         outputTokens: optionalCount(input.outputTokens),
-        estimatedCostUsd: optionalCost(input.estimatedCostUsd),
+        estimatedCostUsd: cost,
         latencyMs: optionalCount(input.latencyMs),
         error: null,
         completedAt: sql`now()`,
       })
       .where(eq(aiJobs.id, jobId));
+    await settleAiCost(tx, jobId, cost);
     return { versionId: version.versionId, versionNumber: version.number };
   });
 }

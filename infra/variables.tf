@@ -77,8 +77,29 @@ variable "ai_editor" {
   }
 }
 
+variable "ai_region" {
+  description = "Region the worker calls Bedrock in; empty = the home region. GPT-5.6 Luna is only sold in US regions (e.g. us-east-1)."
+  type        = string
+  default     = ""
+}
+
 variable "ai_model_id" {
   description = "Bedrock model or inference profile id for ai_editor = \"bedrock\" (empty while fake)."
   type        = string
   default     = ""
+}
+
+variable "ai_kill_switch_usd" {
+  description = <<-EOT
+    Monthly usage (before credits, whole account) at which AWS Budgets blocks the AI worker
+    from calling Bedrock. The fixed infrastructure is ≈ $29 a month, so the default leaves
+    ≈ $11 or more for AI. See ai-kill-switch.tf.
+  EOT
+  type        = number
+  default     = 40
+
+  validation {
+    condition     = var.ai_kill_switch_usd >= 30
+    error_message = "ai_kill_switch_usd must be at least 30, or the fixed infrastructure alone would trip it."
+  }
 }

@@ -45,6 +45,8 @@ describe("worker authentication", () => {
     ["a person's identity", "arn:aws:sts::114990992449:assumed-role/AccountFullAccessRole/someone"],
     ["a look-alike role name", "arn:aws:sts::114990992449:assumed-role/draftpage-ai-worker-evil/x"],
     ["another account's role", "arn:aws:sts::999999999999:assumed-role/draftpage-ai-worker/x"],
+    ["a second value joined onto the real one", `${WORKER}, arn:aws:sts::999999999999:assumed-role/x/y`],
+    ["anything after the session name", `${WORKER}/extra`],
   ])("refuses %s with 403", async (_label, caller) => {
     for (const [route, path] of [
       [claimRoute, "claim"],

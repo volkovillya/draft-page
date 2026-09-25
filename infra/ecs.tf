@@ -143,6 +143,10 @@ resource "aws_ecs_task_definition" "app" {
         # callers signed as the worker Lambda's role (decision D11).
         { name = "DRAFTPAGE_AI_QUEUE_URL", value = aws_sqs_queue.ai_jobs.url },
         { name = "DRAFTPAGE_WORKER_ROLE_ARN", value = aws_iam_role.ai_worker.arn },
+        # The same editor and model as the worker: the app needs them to price the monthly AI
+        # budget's hold per edit (it never calls the model itself).
+        { name = "DRAFTPAGE_AI_EDITOR", value = var.ai_editor },
+        { name = "DRAFTPAGE_AI_MODEL_ID", value = var.ai_model_id },
       ]
       secrets = [
         { name = "AUTH0_SECRET", valueFrom = "${aws_secretsmanager_secret.auth0.arn}:AUTH0_SECRET::" },

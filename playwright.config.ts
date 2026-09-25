@@ -38,6 +38,9 @@ export default defineConfig({
       DRAFTPAGE_WORKER_ROLE_ARN: "arn:aws:iam::000000000000:role/draftpage-ai-worker-e2e",
       DRAFTPAGE_AI_EDITOR: "fake",
       DRAFTPAGE_AI_FAKE_DELAY_MS: "2500", // long enough to see "Working…"
+      // The whole suite shares one member and database; the limits have their own unit tests.
+      DRAFTPAGE_AI_LIMIT_PER_MEMBER: "100000",
+      DRAFTPAGE_AI_LIMIT_TOTAL: "100000",
     },
   },
 });

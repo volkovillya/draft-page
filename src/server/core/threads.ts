@@ -3,10 +3,12 @@ import type { Db, Tx } from "../db/connection";
 import { members, messages, pages, pageVersions, threads } from "../db/tables";
 import { ASSISTANT_DISPLAY_NAME, type Actor } from "./actor";
 import { enqueueEditJob, latestJobsByThread, type AiJobView } from "./ai-jobs";
-import { parseClaudeRequest } from "./claude-trigger";
+import { aiLimitsFromEnv, takeAiAllowance, type AiLimits } from "./ai-limits";
+import { claudeInstructionTooLong, MAX_INSTRUCTION_LENGTH, parseClaudeRequest } from "./claude-trigger";
 import { invalid, missing, notAllowed } from "./failures";
 import { requireMember, requireText, requireUuid } from "./guards";
 import { inPosRange, POS_MAX, POS_MIN } from "../../frame-bridge/range";
+import { MAX_AI_INPUT_BYTES } from "../../ai/prompt";
 
 export const MAX_MESSAGE_LENGTH = 10_000;
 export const MAX_EXCERPT_LENGTH = 500;
@@ -54,6 +56,7 @@ export async function openThread(
   db: Db,
   actor: Actor,
   input: OpenThreadInput,
+  aiLimits: AiLimits = aiLimitsFromEnv(),
 ): Promise<{ threadId: string; claudeRequested: boolean }> {
   const member = requireMember(actor);
   const versionId = requireUuid(input.versionId, "Version");
@@ -62,14 +65,26 @@ export async function openThread(
   const text = requireText(input.text, "Message", 1, MAX_MESSAGE_LENGTH);
   const targetPath = optionalText(input.targetPath, MAX_TARGET_PATH_LENGTH);
   const excerpt = optionalText(input.excerpt, MAX_EXCERPT_LENGTH, true);
+  if (claudeInstructionTooLong(text)) {
+    throw invalid(
+      `Instructions for Claude are limited to ${MAX_INSTRUCTION_LENGTH.toLocaleString("en-US")} characters`,
+    );
+  }
   const claude = parseClaudeRequest(text);
 
   return db.transaction(async (tx) => {
     const version = await tx.query.pageVersions.findFirst({
       where: eq(pageVersions.id, versionId),
       columns: { id: true, pageId: true, number: true },
+      extras: { htmlBytes: sql<number>`octet_length(${pageVersions.html})`.as("html_bytes") },
     });
     if (!version) throw missing("Version");
+    // Refused here rather than by the worker, so it never holds any of the AI budget.
+    if (claude.requested && Number(version.htmlBytes) > MAX_AI_INPUT_BYTES) {
+      throw invalid(
+        `This page is too large for an AI edit (over ${MAX_AI_INPUT_BYTES / 1024} KiB). To post it as a normal comment, remove "@Claude".`,
+      );
+    }
     // Share-lock the page so a concurrent addVersion (which takes FOR UPDATE) can't slip in
     // between the "is this the newest version" check and the insert.
     await tx.select({ id: pages.id }).from(pages).where(eq(pages.id, version.pageId)).for("share");
@@ -103,12 +118,13 @@ export async function openThread(
       .returning({ id: messages.id });
     // The AI job and its outbox event commit with the thread, or not at all (§23).
     if (claude.requested) {
-      await enqueueEditJob(tx, {
+      const jobId = await enqueueEditJob(tx, {
         pageId: version.pageId,
         threadId: thread!.id,
         requestMessageId: opening!.id,
         baseVersionId: version.id,
       });
+      await takeAiAllowance(tx, member.memberId, jobId, aiLimits);
     }
     return { threadId: thread!.id, claudeRequested: claude.requested };
   });

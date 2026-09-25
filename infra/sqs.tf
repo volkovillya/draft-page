@@ -11,9 +11,9 @@ resource "aws_sqs_queue" "ai_jobs" {
   name = "draftpage-ai-jobs"
 
   # How long a job stays hidden from other consumers after the worker picks it up. AWS
-  # advises 6× the Lambda timeout (planned: 3 minutes) so a slow run is never handed to a
-  # second worker while the first is still going.
-  visibility_timeout_seconds = 1080
+  # advises 6× the Lambda timeout (6 minutes) so a slow run is never handed to a second
+  # worker while the first is still going.
+  visibility_timeout_seconds = 2160
 
   # Unfinished jobs are kept 4 days (covers a paused weekend), then SQS drops them.
   message_retention_seconds = 345600
