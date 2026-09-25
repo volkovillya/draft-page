@@ -1,0 +1,29 @@
+# Only what the build needs goes into the Docker build context.
+# Secrets and local state never do.
+.env*
+!.env.example
+.git
+.claude
+.next
+.next-*
+node_modules
+test-results
+playwright-report
+tests
+playwright.config.ts
+vitest.config.ts
+scripts/test-db.sh
+infra
+**/.terraform
+*.tfstate*
+*.tfvars
+*.tfplan
+*.md
+.DS_Store
+.vscode
+.idea
+npm-debug.log*
+tsconfig.tsbuildinfo
+docker-compose.yml
+Dockerfile
+.dockerignore

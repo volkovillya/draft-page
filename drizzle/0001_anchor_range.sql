@@ -1,0 +1,2 @@
+ALTER TABLE "threads" DROP CONSTRAINT "threads_pos_range_ck";--> statement-breakpoint
+ALTER TABLE "threads" ADD CONSTRAINT "threads_pos_range_ck" CHECK ("threads"."pos_x" BETWEEN -1 AND 2 AND "threads"."pos_y" BETWEEN -1 AND 2);

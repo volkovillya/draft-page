@@ -1,0 +1,47 @@
+# Local-only documentation and assistant workspace (owner's rule: docs stay out of Git).
+# The public README.md is the single committed document.
+.claude/
+docs/
+*.md
+!/README.md
+
+# dependencies
+node_modules/
+
+# next.js / build output
+.next/
+.next-*/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+
+# tests
+coverage/
+test-results/
+playwright-report/
+
+# env and secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# terraform (state can contain secrets; never commit it)
+terraform.tfstate
+terraform.tfstate.*
+**/.terraform/
+*.tfplan
+crash.log
+# variable values (e.g. the alert email) stay local; the .example file is committed
+*.tfvars
+!*.tfvars.example
+
+# lambda bundles
+dist/
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
+npm-debug.log*

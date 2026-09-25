@@ -1,0 +1,16 @@
+# Local development database for DraftPage. Not used in AWS.
+services:
+  draftpage-db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: draftpage
+      POSTGRES_USER: draftpage
+      POSTGRES_PASSWORD: draftpage-local
+    ports:
+      - "5440:5432"
+    volumes:
+      - draftpage_pgdata:/var/lib/postgresql
+
+volumes:
+  draftpage_pgdata:
