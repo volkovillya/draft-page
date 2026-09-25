@@ -1,6 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { addVersion, getVersionHtml, publishVersion, unpublishVersion } from "@/server/core/versions";
+import { openThread } from "@/server/core/threads";
+import { addVersion, deleteVersion, getVersionHtml, publishVersion, unpublishVersion } from "@/server/core/versions";
+import { threads } from "@/server/db/tables";
 import { pageVersions } from "@/server/db/tables";
 import { assistantActor, closeTestDb, failureCode, makeMember, makePage, reset, testDb } from "../helpers/db";
 
@@ -215,5 +217,42 @@ describe("getVersionHtml", () => {
     const owner = await makeMember();
     expect(await failureCode(getVersionHtml(db, owner, "x"))).toBe("invalid");
     expect(await failureCode(getVersionHtml(db, owner, "00000000-0000-4000-8000-000000000000"))).toBe("missing");
+  });
+});
+
+describe("deleteVersion", () => {
+  it("deletes one draft; the others keep their numbers", async () => {
+    const owner = await makeMember();
+    const page = await makePage(owner);
+    const v2 = await addVersion(db, owner, { pageId: page.id, html: "<p>2</p>" });
+    await addVersion(db, owner, { pageId: page.id, html: "<p>3</p>" });
+    await deleteVersion(db, owner, v2.versionId);
+    expect(await states(page.id)).toEqual(["1:draft", "3:draft"]);
+  });
+
+  it("deletes the threads opened on it, and keeps threads carried from earlier versions", async () => {
+    const owner = await makeMember();
+    const page = await makePage(owner);
+    const onV1 = await openThread(db, owner, { versionId: page.versionId, posX: 0.1, posY: 0.1, text: "on v1" });
+    const v2 = await addVersion(db, owner, { pageId: page.id, html: "<p>2</p>" });
+    const onV2 = await openThread(db, owner, { versionId: v2.versionId, posX: 0.1, posY: 0.1, text: "@Claude on v2" });
+    await deleteVersion(db, owner, v2.versionId);
+    const left = await db.select({ id: threads.id }).from(threads);
+    expect(left.map((t) => t.id)).toEqual([onV1.threadId]);
+    expect(left.map((t) => t.id)).not.toContain(onV2.threadId);
+  });
+
+  it("refuses the live version, the last version, non-owners and the assistant", async () => {
+    const owner = await makeMember();
+    const other = await makeMember();
+    const page = await makePage(owner);
+    expect(await failureCode(deleteVersion(db, owner, page.versionId))).toBe("invalid"); // the only one
+    const v2 = await addVersion(db, owner, { pageId: page.id, html: "<p>2</p>" });
+    await publishVersion(db, owner, v2.versionId);
+    expect(await failureCode(deleteVersion(db, owner, v2.versionId))).toBe("invalid"); // live
+    expect(await failureCode(deleteVersion(db, other, page.versionId))).toBe("not_allowed");
+    expect(await failureCode(deleteVersion(db, assistantActor({ pageId: page.id }), page.versionId))).toBe("not_allowed");
+    expect(await failureCode(deleteVersion(db, owner, "nope"))).toBe("invalid");
+    expect(await states(page.id)).toEqual(["1:draft", "2:live"]);
   });
 });

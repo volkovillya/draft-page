@@ -37,12 +37,17 @@ export function Menu({
         setOpen(false);
       }
     };
+    // Clicks inside an iframe (the page preview) never reach this document; the window only
+    // loses focus. Closing on blur covers that, and switching tabs or apps.
+    const onBlur = () => setOpen(false);
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey, true);
+    window.addEventListener("blur", onBlur);
     list.current?.querySelector<HTMLElement>("[role=menuitem]:not([aria-disabled=true])")?.focus();
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("blur", onBlur);
     };
   }, [open]);
 

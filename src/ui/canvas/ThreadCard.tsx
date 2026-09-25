@@ -1,7 +1,9 @@
 "use client";
 
 import { Check, RotateCcw, Trash2, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import type { AiJobView } from "@/server/core/ai-jobs";
 import type { ThreadView } from "@/server/core/threads";
 import { IconButton } from "@/ui/common/Button";
 import { Avatar, Spark } from "@/ui/common/MemberBadge";
@@ -94,7 +96,7 @@ export function ThreadCard({
         </span>
         <span className="text-[13px] font-medium text-soft">{closed ? "Resolved" : "Open"}</span>
         {thread.carried ? <Chip>from v{thread.openedOnNumber}</Chip> : null}
-        {thread.claudeRequestedAt ? <ClaudeChip /> : null}
+        {thread.claudeRequestedAt ? <ClaudeChip job={thread.aiJob} linked /> : null}
         <span className="flex-1" />
         {writable && thread.canClose ? (
           <IconButton
@@ -123,7 +125,10 @@ export function ThreadCard({
               <Avatar name={m.senderName} size={24} assistant={m.authorKind === "assistant"} />
               <div className="min-w-0 flex-1">
                 <div className="flex h-6 items-center gap-2 text-[13px]">
-                  <span className="truncate font-medium text-ink">{m.senderName}</span>
+                  <span className="truncate font-medium text-ink">
+                    {m.senderName}
+                    {m.via ? <span className="font-normal text-muted"> · via {m.via}</span> : null}
+                  </span>
                   <time dateTime={m.createdAt} title={new Date(m.createdAt).toLocaleString()} className="shrink-0 text-xs text-muted">
                     {relativeTime(m.createdAt, now)}
                   </time>
@@ -148,6 +153,9 @@ export function ThreadCard({
               </div>
             </li>
           ))}
+          {thread.aiJob?.status === "pending" || thread.aiJob?.status === "processing" ? (
+            <ClaudeWorking queued={thread.aiJob.status === "pending"} via={thread.messages[0]?.senderName ?? null} />
+          ) : null}
         </ol>
       </div>
 
@@ -184,17 +192,75 @@ export function MessageText({ text }: { text: string }) {
   );
 }
 
+/** Claude's place in the conversation while it works: its avatar, name and animated dots. */
+function ClaudeWorking({ queued, via }: { queued: boolean; via: string | null }) {
+  return (
+    <li className="flex gap-2.5">
+      <Avatar name="Claude" size={24} assistant />
+      <div className="min-w-0 flex-1">
+        <div className="flex h-6 items-center gap-2 text-[13px]">
+          <span className="truncate font-medium text-ink">
+            Claude{via ? <span className="font-normal text-muted"> · via {via}</span> : null}
+          </span>
+          <span className="shrink-0 text-xs text-muted">now</span>
+        </div>
+        <p role="status" className="flex items-center gap-2 text-sm text-muted">
+          <span aria-hidden="true" className="dp-dots inline-flex gap-[3px] text-accent">
+            <span className="size-1.5 rounded-full bg-current" />
+            <span className="size-1.5 rounded-full bg-current" />
+            <span className="size-1.5 rounded-full bg-current" />
+          </span>
+          {queued ? "Queued…" : "Working…"}
+        </p>
+      </div>
+    </li>
+  );
+}
+
 export function Chip({ children }: { children: ReactNode }) {
   return (
     <span className="rounded-md bg-hover px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-muted">{children}</span>
   );
 }
 
-export function ClaudeChip() {
+/**
+ * Where a thread's "@Claude" request stands. A failure shows its reason on hover. With
+ * `linked`, a finished edit links to the version Claude made (not inside another button).
+ */
+export function ClaudeChip({ job, linked = false }: { job: AiJobView | null; linked?: boolean }) {
+  const failed = job?.status === "failed";
+  const label =
+    job?.status === "processing"
+      ? "Claude is editing…"
+      : job?.status === "completed"
+        ? job.resultVersionNumber
+          ? `Claude made v${job.resultVersionNumber}`
+          : "Claude replied"
+        : failed
+          ? "Claude couldn't do this"
+          : "Sent to Claude";
+  const made = job?.status === "completed" ? job.resultVersionNumber : null;
+  if (linked && made) {
+    return (
+      <Link
+        href={{ query: { n: made } }}
+        className="inline-flex items-center gap-1 rounded-md bg-accent/12 px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-accent underline-offset-2 hover:underline"
+      >
+        <Spark size={9} />
+        {label}
+      </Link>
+    );
+  }
   return (
-    <span className="inline-flex items-center gap-1 rounded-md bg-accent/12 px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-accent">
+    <span
+      title={failed ? (job.error ?? undefined) : undefined}
+      className={
+        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap " +
+        (failed ? "bg-danger/12 text-danger" : "bg-accent/12 text-accent")
+      }
+    >
       <Spark size={9} />
-      Sent to Claude
+      {label}
     </span>
   );
 }

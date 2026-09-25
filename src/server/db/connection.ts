@@ -5,6 +5,8 @@ import { databaseConfigFromEnv, type ConnectionFields, type SslMode } from "./en
 import * as tables from "./tables";
 
 export type Db = PostgresJsDatabase<typeof tables>;
+/** An open transaction, for core helpers that must run inside a caller's transaction. */
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 export function createDb(
   connection: string | (Omit<ConnectionFields, "password"> & { password: string | (() => Promise<string>) }),

@@ -62,3 +62,11 @@ output "app_url" {
 output "ecs_service_name" {
   value = aws_ecs_service.app.name
 }
+
+output "ai_jobs_queue_url" {
+  value = aws_sqs_queue.ai_jobs.url
+}
+
+output "ai_jobs_queue_arn" {
+  value = aws_sqs_queue.ai_jobs.arn
+}

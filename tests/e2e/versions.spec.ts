@@ -35,6 +35,24 @@ test.describe("versions, publishing and export", () => {
     await expect(menu(page)).toBeHidden();
   });
 
+  test("a draft version can be deleted, with a warning about its comments", async ({ page }) => {
+    await uploadVersion(page, SAMPLE_HTML_V2);
+    await pinComment(page, "h1", "a comment on v2");
+    let confirmText = "";
+    page.once("dialog", (dialog) => {
+      confirmText = dialog.message();
+      void dialog.accept();
+    });
+    await menuButton(page).click();
+    await menu(page).getByRole("menuitem", { name: "Delete version 2…" }).click();
+    await expect(menuButton(page)).toContainText("v1");
+    expect(confirmText).toBe("Delete version 2 and the 1 comment thread opened on it? It can't be undone.");
+    await menuButton(page).click();
+    await expect(menu(page)).not.toContainText("Version 2");
+    // The last remaining version can't be deleted (delete the page instead).
+    await expect(menu(page).getByRole("menuitem", { name: /Delete version/ })).toHaveCount(0);
+  });
+
   test("the menu supports arrow keys", async ({ page }) => {
     await menuButton(page).click();
     const items = menu(page).getByRole("menuitem");

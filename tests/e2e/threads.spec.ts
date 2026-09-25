@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { SAMPLE_HTML, pinComment, shot, signInAndCreatePage } from "./helpers";
+import { SAMPLE_HTML, createPage, pinComment, shot, signInAndCreatePage } from "./helpers";
 
 const rail = (page: Page) => page.getByRole("complementary", { name: "Comments" });
 const card = (page: Page, n: number) => page.getByRole("dialog", { name: `Thread ${n}` });
@@ -128,8 +128,52 @@ test.describe("pinned comment threads", () => {
 
   test("an @Claude comment highlights the mention and is marked as sent", async ({ page }) => {
     await pinComment(page, "h1", "@Claude make the headline bigger");
-    await expect(card(page, 1)).toContainText("Sent to Claude");
+    await expect(card(page, 1)).toContainText(/Sent to Claude|Claude is editing|Claude made v2/); // the pretend AI is quick
     await expect(card(page, 1).getByText("@Claude", { exact: true })).toBeVisible();
+  });
+
+  test("an @Claude request comes back as a draft version and a reply from Claude", async ({ page }) => {
+    await pinComment(page, "h1", "@Claude make the headline bigger");
+    // While the pretend AI "thinks" (2.5 s in e2e), Claude's row shows it's working.
+    const working = card(page, 1).getByRole("status");
+    await expect(working).toHaveText(/Queued…|Working…/);
+    await expect(card(page, 1)).toContainText("Claude · via Local Dev");
+    // The canvas polls until the job is done; then the row is replaced by Claude's reply.
+    const made = card(page, 1).getByRole("link", { name: /Claude made v2/ });
+    await expect(made).toBeVisible({ timeout: 15_000 });
+    await expect(card(page, 1)).toContainText("Pretend AI edit: no real model is connected yet");
+    await expect(card(page, 1)).toContainText("Draft v2 is ready for review.");
+    await expect(working).toHaveCount(0);
+    await expect(page.frameLocator("iframe").locator("h1")).toHaveText("Hello"); // still on v1
+    // The version menu lists Claude's draft without a reload.
+    await page.locator("header button[aria-haspopup=menu]").click();
+    await expect(page.getByRole("menu", { name: "Page menu" })).toContainText("Version 2");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("header button[aria-haspopup=menu]")).toContainText("v1"); // no jump
+    await page.getByRole("button", { name: "Thread 1, open" }).click(); // the menu closed the card
+
+    await made.click();
+    await expect(page).toHaveURL(/[?&]n=2/);
+    // The pretend edit is an invisible HTML comment: the page looks exactly the same.
+    await expect(page.frameLocator("iframe").locator("h1")).toHaveText("Hello");
+    await expect(page.getByRole("button", { name: "Publish", exact: true })).toBeVisible(); // still a draft: only a person publishes
+  });
+
+  test("a failed @Claude request says why", async ({ page }) => {
+    // Bigger than the AI input limit (300 KiB), so the editor refuses it. Too heavy to click
+    // around in, so the thread is opened through the API and checked in the rail.
+    const big = `<!doctype html><html><body><h1>Big</h1><p>${"lorem ipsum ".repeat(28_000)}</p></body></html>`;
+    const { shortId } = await createPage(page, big);
+    const { versionId } = (await (await page.request.get(`/api/pages/${shortId}/threads`)).json()) as { versionId: string };
+    const opened = await page.request.post(`/api/pages/${shortId}/threads`, {
+      data: { versionId, posX: 0.1, posY: 0.1, text: "@Claude shorten this" },
+    });
+    expect(opened.status()).toBe(201);
+
+    await page.goto(`/pages/${shortId}`);
+    const chip = page.getByRole("complementary", { name: "Comments" }).getByText("Claude couldn't do this");
+    await expect(chip).toBeVisible({ timeout: 15_000 });
+    await expect(chip).toHaveAttribute("title", "This page is too large for an AI edit");
   });
 
   test("the composer's Send to Claude checkbox and the @Claude text stay in sync", async ({ page }) => {

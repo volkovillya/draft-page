@@ -59,7 +59,7 @@ test.describe("comment composer opens and closes the way people expect", () => {
     await page.getByText("Send to Claude").click();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("complementary", { name: "Comments" })).toContainText("make this text bold");
-    await expect(page.getByRole("complementary", { name: "Comments" })).toContainText("Sent to Claude");
+    await expect(page.getByRole("complementary", { name: "Comments" })).toContainText(/Sent to Claude|Claude is editing|Claude made v2/);
     await expect(page.getByRole("button", { name: /Thread 1, open/ })).toBeVisible();
   });
 });

@@ -45,3 +45,4 @@ dist/
 .vscode/
 .idea/
 npm-debug.log*
+.terraform.tfstate.lock.info

@@ -4,6 +4,7 @@ import { defaultVersion, getPage } from "@/server/core/pages";
 import { listThreads, openThread } from "@/server/core/threads";
 import { invalid, missing } from "@/server/core/failures";
 import { readJson, withMember } from "@/server/http";
+import { kickRelay } from "@/server/outbox/relay";
 import { stringField, type Params } from "../../../_lib/body";
 
 /** Threads visible on one version of the page: `?n=` picks it (default: live, else newest). */
@@ -42,5 +43,6 @@ export const POST = withMember(async (actor, request, { params }: Params<"shortI
     excerpt: body.excerpt,
     text: body.text,
   });
+  if (opened.claudeRequested) kickRelay(); // publish the job now, not at the next tick
   return NextResponse.json(opened, { status: 201 });
 });

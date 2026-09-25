@@ -32,6 +32,12 @@ export default defineConfig({
       DRAFTPAGE_DIST_DIR: ".next-e2e",
       DRAFTPAGE_DATABASE_URL: E2E_DATABASE_URL,
       DRAFTPAGE_DATABASE_SSL: "false",
+      // AI jobs run in the e2e server itself, with the pretend AI.
+      DRAFTPAGE_AI_LOCAL_WORKER: "on",
+      DRAFTPAGE_AI_LOCAL_WORKER_URL: `http://localhost:${PORT}`,
+      DRAFTPAGE_WORKER_ROLE_ARN: "arn:aws:iam::000000000000:role/draftpage-ai-worker-e2e",
+      DRAFTPAGE_AI_EDITOR: "fake",
+      DRAFTPAGE_AI_FAKE_DELAY_MS: "2500", // long enough to see "Working…"
     },
   },
 });

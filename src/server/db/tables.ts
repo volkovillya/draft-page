@@ -3,6 +3,8 @@ import {
   check,
   index,
   integer,
+  jsonb,
+  numeric,
   pgEnum,
   pgTable,
   real,
@@ -119,8 +121,77 @@ export const messages = pgTable(
   ],
 );
 
+export const aiJobKind = pgEnum("ai_job_kind", ["edit_page"]);
+export const aiJobStatus = pgEnum("ai_job_status", ["pending", "processing", "completed", "failed"]);
+
+/**
+ * One "@Claude" request. Created with the thread in the same transaction; the worker then
+ * moves it pending → processing → completed | failed. The unique key makes a job for the
+ * same thread and base version impossible to create twice.
+ */
+export const aiJobs = pgTable(
+  "ai_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    kind: aiJobKind("kind").notNull().default("edit_page"),
+    status: aiJobStatus("status").notNull().default("pending"),
+    pageId: uuid("page_id")
+      .notNull()
+      .references(() => pages.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    requestMessageId: uuid("request_message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    baseVersionId: uuid("base_version_id")
+      .notNull()
+      .references(() => pageVersions.id, { onDelete: "cascade" }),
+    resultVersionId: uuid("result_version_id").references(() => pageVersions.id, { onDelete: "set null" }),
+    replyMessageId: uuid("reply_message_id").references(() => messages.id, { onDelete: "set null" }),
+    provider: text("provider"),
+    model: text("model"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    estimatedCostUsd: numeric("estimated_cost_usd", { precision: 10, scale: 6 }),
+    latencyMs: integer("latency_ms"),
+    error: text("error"),
+    createdAt: ts("created_at").defaultNow().notNull(),
+    startedAt: ts("started_at"),
+    completedAt: ts("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("ai_jobs_thread_base_kind_uq").on(t.threadId, t.baseVersionId, t.kind),
+    index("ai_jobs_page_ix").on(t.pageId),
+  ],
+);
+
+/**
+ * Transactional outbox (§23): a row written in the same transaction as the change it
+ * announces. The relay publishes undispatched rows to SQS and stamps dispatched_at, so a
+ * crash between the commit and the publish loses nothing.
+ */
+export const outboxEvents = pgTable(
+  "outbox_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    topic: text("topic").notNull(),
+    aggregateId: uuid("aggregate_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: ts("created_at").defaultNow().notNull(),
+    availableAt: ts("available_at").defaultNow().notNull(),
+    dispatchedAt: ts("dispatched_at"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+  },
+  (t) => [index("outbox_events_pending_ix").on(t.availableAt).where(sql`${t.dispatchedAt} IS NULL`)],
+);
+
 export type Member = typeof members.$inferSelect;
 export type Page = typeof pages.$inferSelect;
 export type PageVersion = typeof pageVersions.$inferSelect;
 export type Thread = typeof threads.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type AiJob = typeof aiJobs.$inferSelect;
+export type OutboxEvent = typeof outboxEvents.$inferSelect;

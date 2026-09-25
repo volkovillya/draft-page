@@ -1,7 +1,8 @@
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
-import type { Db } from "../db/connection";
+import type { Db, Tx } from "../db/connection";
 import { members, messages, pages, pageVersions, threads } from "../db/tables";
 import { ASSISTANT_DISPLAY_NAME, type Actor } from "./actor";
+import { enqueueEditJob, latestJobsByThread, type AiJobView } from "./ai-jobs";
 import { parseClaudeRequest } from "./claude-trigger";
 import { invalid, missing, notAllowed } from "./failures";
 import { requireMember, requireText, requireUuid } from "./guards";
@@ -16,6 +17,8 @@ export type MessageView = {
   seq: number;
   authorKind: "member" | "assistant";
   senderName: string;
+  /** Assistant messages only: the person whose "@Claude" request this answers. */
+  via: string | null;
   text: string;
   createdAt: string;
   canDelete: boolean;
@@ -30,6 +33,8 @@ export type ThreadView = {
   targetPath: string | null;
   excerpt: string | null;
   claudeRequestedAt: string | null;
+  /** The thread's newest AI job, when its opening message asked Claude for an edit. */
+  aiJob: AiJobView | null;
   closedAt: string | null;
   canClose: boolean;
   messages: MessageView[];
@@ -86,14 +91,25 @@ export async function openThread(
         claudeRequestedAt: claude.requested ? sql`now()` : null,
       })
       .returning({ id: threads.id });
-    await tx.insert(messages).values({
-      threadId: thread!.id,
-      seq: 1,
-      authorKind: "member",
-      authorMemberId: member.memberId,
-      text,
-    });
-    // Phase 3: insert ai_jobs + outbox_events here, in this same transaction.
+    const [opening] = await tx
+      .insert(messages)
+      .values({
+        threadId: thread!.id,
+        seq: 1,
+        authorKind: "member",
+        authorMemberId: member.memberId,
+        text,
+      })
+      .returning({ id: messages.id });
+    // The AI job and its outbox event commit with the thread, or not at all (§23).
+    if (claude.requested) {
+      await enqueueEditJob(tx, {
+        pageId: version.pageId,
+        threadId: thread!.id,
+        requestMessageId: opening!.id,
+        baseVersionId: version.id,
+      });
+    }
     return { threadId: thread!.id, claudeRequested: claude.requested };
   });
 }
@@ -110,28 +126,39 @@ export async function postMessage(
     throw notAllowed("The assistant can only reply in its job's thread");
   }
 
-  return db.transaction(async (tx) => {
-    const [thread] = await tx.select().from(threads).where(eq(threads.id, threadId)).for("update");
-    if (!thread) throw missing("Thread");
-    if (thread.closedAt) throw invalid("This thread is resolved; reopen it to reply");
+  return db.transaction((tx) => appendMessage(tx, actor, { threadId, text }));
+}
 
-    const [{ next }] = (await tx
-      .select({ next: sql<number>`coalesce(max(${messages.seq}), 0)::int + 1` })
-      .from(messages)
-      .where(eq(messages.threadId, threadId))) as [{ next: number }];
+/** The body of postMessage, for callers that already hold a transaction (completing an AI job). */
+export async function appendMessage(
+  tx: Tx,
+  actor: Actor,
+  input: { threadId: string; text: string },
+): Promise<{ messageId: string; seq: number }> {
+  const { threadId, text } = input;
+  if (actor.kind === "assistant" && actor.threadId !== threadId) {
+    throw notAllowed("The assistant can only reply in its job's thread");
+  }
+  const [thread] = await tx.select().from(threads).where(eq(threads.id, threadId)).for("update");
+  if (!thread) throw missing("Thread");
+  if (thread.closedAt) throw invalid("This thread is resolved; reopen it to reply");
 
-    const [created] = await tx
-      .insert(messages)
-      .values({
-        threadId,
-        seq: next,
-        authorKind: actor.kind === "member" ? "member" : "assistant",
-        authorMemberId: actor.kind === "member" ? actor.memberId : null,
-        text,
-      })
-      .returning({ id: messages.id, seq: messages.seq });
-    return { messageId: created!.id, seq: created!.seq };
-  });
+  const [{ next }] = (await tx
+    .select({ next: sql<number>`coalesce(max(${messages.seq}), 0)::int + 1` })
+    .from(messages)
+    .where(eq(messages.threadId, threadId))) as [{ next: number }];
+
+  const [created] = await tx
+    .insert(messages)
+    .values({
+      threadId,
+      seq: next,
+      authorKind: actor.kind === "member" ? "member" : "assistant",
+      authorMemberId: actor.kind === "member" ? actor.memberId : null,
+      text,
+    })
+    .returning({ id: messages.id, seq: messages.seq });
+  return { messageId: created!.id, seq: created!.seq };
 }
 
 export async function closeThread(db: Db, actor: Actor, threadId: string): Promise<void> {
@@ -208,22 +235,26 @@ export async function listThreads(db: Db, actor: Actor, versionId: string): Prom
     .orderBy(asc(threads.createdAt), asc(threads.id)); // oldest first: thread #1 is the first opened
   if (rows.length === 0) return [];
 
+  const threadIds = rows.map((r) => r.thread.id);
+  const jobs = await latestJobsByThread(db, threadIds);
   const msgRows = await db
     .select({ message: messages, senderName: members.name })
     .from(messages)
     .leftJoin(members, eq(members.id, messages.authorMemberId))
     .where(
-      inArray(
-        messages.threadId,
-        rows.map((r) => r.thread.id),
-      ),
+      inArray(messages.threadId, threadIds),
     )
     .orderBy(asc(messages.seq));
 
   const byThread = new Map<string, MessageView[]>();
   const openerOf = new Map<string, string | null>();
+  const openerNameOf = new Map<string, string>();
   for (const { message, senderName } of msgRows) {
-    if (message.seq === 1) openerOf.set(message.threadId, message.authorMemberId);
+    if (message.seq !== 1) continue;
+    openerOf.set(message.threadId, message.authorMemberId);
+    openerNameOf.set(message.threadId, senderName ?? "Former member");
+  }
+  for (const { message, senderName } of msgRows) {
     const list = byThread.get(message.threadId) ?? [];
     list.push({
       id: message.id,
@@ -231,6 +262,7 @@ export async function listThreads(db: Db, actor: Actor, versionId: string): Prom
       authorKind: message.authorKind,
       senderName:
         message.authorKind === "assistant" ? ASSISTANT_DISPLAY_NAME : (senderName ?? "Former member"),
+      via: message.authorKind === "assistant" ? (openerNameOf.get(message.threadId) ?? null) : null,
       text: message.text,
       createdAt: message.createdAt.toISOString(),
       canDelete: isOwner || message.authorMemberId === member.memberId,
@@ -247,6 +279,7 @@ export async function listThreads(db: Db, actor: Actor, versionId: string): Prom
     targetPath: thread.targetPath,
     excerpt: thread.excerpt,
     claudeRequestedAt: thread.claudeRequestedAt?.toISOString() ?? null,
+    aiJob: jobs.get(thread.id) ?? null,
     closedAt: thread.closedAt?.toISOString() ?? null,
     canClose: isOwner || openerOf.get(thread.id) === member.memberId,
     messages: byThread.get(thread.id) ?? [],

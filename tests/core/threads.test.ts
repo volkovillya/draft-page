@@ -247,6 +247,9 @@ describe("postMessage", () => {
 
     const view = (await listThreads(db, reviewer, page.versionId)).find((t) => t.id === mine.threadId)!;
     expect(view.messages[1]).toMatchObject({ authorKind: "assistant", senderName: "Claude", text: "Done, see v2" });
+    // "Claude · via <who asked>": the assistant answers the thread's opener; members have no via.
+    expect(view.messages[1]!.via).toBe(view.messages[0]!.senderName);
+    expect(view.messages[0]!.via).toBeNull();
     expect(view.messages[0]!.senderName).toBe("Reviewer");
   });
 });

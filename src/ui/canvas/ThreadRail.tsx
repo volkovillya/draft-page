@@ -121,7 +121,7 @@ export const ThreadRail = memo(function ThreadRail({
                       {thread.carried || thread.claudeRequestedAt ? (
                         <span className="mt-0.5 flex flex-wrap gap-1">
                           {thread.carried ? <Chip>from v{thread.openedOnNumber}</Chip> : null}
-                          {thread.claudeRequestedAt ? <ClaudeChip /> : null}
+                          {thread.claudeRequestedAt ? <ClaudeChip job={thread.aiJob} /> : null}
                         </span>
                       ) : null}
                     </span>

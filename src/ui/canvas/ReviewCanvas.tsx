@@ -49,6 +49,7 @@ export type CanvasPage = Pick<PageDetail, "shortId" | "title" | "ownerName" | "i
 
 /** Pseudo thread id for the composer's pick point, so it follows the page like a marker. */
 const DRAFT_ID = "draft";
+const AI_POLL_MS = 2000;
 
 /**
  * The review canvas: the version rendered in a sandboxed iframe, a marker overlay driven by
@@ -101,6 +102,28 @@ export function ReviewCanvas({
   const draftDirty = useRef(false);
   const box = useElementSize(stageRef);
   useRefreshOnHistoryReturn();
+
+  // While Claude is working on a thread, refetch this version's threads every few seconds
+  // (only while the tab is visible) so its reply and status show up without a reload. Only
+  // the threads: a full refresh would jump to Claude's new version while you're reviewing.
+  const aiBusy = threads.some((t) => t.aiJob?.status === "pending" || t.aiJob?.status === "processing");
+  useEffect(() => {
+    if (!aiBusy) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      fetchThreads(shortId, version.number).then((next) => {
+        setThreads(next);
+        // Claude made a version this page doesn't list yet: re-render with the current version
+        // pinned in the URL, so the version menu updates without jumping to the new version.
+        const known = new Set(page.versions.map((v) => v.number));
+        if (next.some((t) => t.aiJob?.resultVersionNumber && !known.has(t.aiJob.resultVersionNumber))) {
+          router.replace(`/pages/${encodeURIComponent(shortId)}?n=${version.number}`, { scroll: false });
+          router.refresh();
+        }
+      }, () => {}); // next tick retries
+    }, AI_POLL_MS);
+    return () => clearInterval(timer);
+  }, [aiBusy, shortId, version.number, page.versions, router]);
 
   // On a phone the comments open as a sheet over the page, so start with them closed.
   useEffect(() => {
@@ -308,6 +331,7 @@ export function ReviewCanvas({
                 seq: t.messages.length + 1,
                 authorKind: "member",
                 senderName: memberName,
+                via: null,
                 text,
                 createdAt: new Date().toISOString(),
                 canDelete: false,
@@ -375,7 +399,13 @@ export function ReviewCanvas({
         <Link href="/pages" aria-label="Back to pages" title="Back to pages" className={iconLinkClass()}>
           <ChevronLeft />
         </Link>
-        <PageMenu page={page} version={version} onAddVersion={() => setAddOpen(true)} onError={setError} />
+        <PageMenu
+          page={page}
+          version={version}
+          ownThreadCount={threads.filter((t) => !t.carried).length}
+          onAddVersion={() => setAddOpen(true)}
+          onError={setError}
+        />
         <span
           className={
             "ml-1 hidden items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium sm:inline-flex " +
@@ -570,11 +600,14 @@ function Notice({ children, tone = "info" }: { children: ReactNode; tone?: "info
 function PageMenu({
   page,
   version,
+  ownThreadCount,
   onAddVersion,
   onError,
 }: {
   page: CanvasPage;
   version: VersionSummary;
+  /** Threads opened on this version (not carried from earlier ones): deleted with it. */
+  ownThreadCount: number;
   onAddVersion: () => void;
   onError: (message: string) => void;
 }) {
@@ -582,6 +615,23 @@ function PageMenu({
   const [pending, startTransition] = useTransition();
   const go = (n: number) =>
     startTransition(() => router.push(`/pages/${encodeURIComponent(page.shortId)}?n=${n}`));
+  const canDeleteVersion = page.isOwner && version.state !== "live" && page.versions.length > 1;
+  function deleteVersion() {
+    const threads =
+      ownThreadCount === 0
+        ? ""
+        : ` and the ${ownThreadCount} comment ${ownThreadCount === 1 ? "thread" : "threads"} opened on it`;
+    if (!window.confirm(`Delete version ${version.number}${threads}? It can't be undone.`)) return;
+    startTransition(async () => {
+      try {
+        await api(`/api/versions/${version.id}`, { method: "DELETE" });
+        router.replace(`/pages/${encodeURIComponent(page.shortId)}`); // back to the default version
+        router.refresh();
+      } catch (e) {
+        onError((e as Error).message);
+      }
+    });
+  }
   function deletePage() {
     const count = page.versions.length;
     const ok = window.confirm(
@@ -662,6 +712,11 @@ function PageMenu({
           >
             Export review as Markdown
           </MenuItem>
+          {canDeleteVersion ? (
+            <MenuItem icon={<Trash2 />} danger onSelect={() => { close(); deleteVersion(); }}>
+              Delete version {version.number}…
+            </MenuItem>
+          ) : null}
           {page.isOwner ? (
             <MenuItem icon={<Trash2 />} danger onSelect={() => { close(); deletePage(); }}>
               Delete page…

@@ -42,9 +42,9 @@ describe("migration runner (node migrate.ts)", () => {
     const db = postgres({ host: fields.DRAFTPAGE_DB_HOST, port: Number(fields.DRAFTPAGE_DB_PORT), database: DB_NAME, username: fields.DRAFTPAGE_DB_USER, password: fields.DRAFTPAGE_DB_PASSWORD, max: 1, onnotice: () => {} });
     try {
       const tables = await db`select table_name from information_schema.tables where table_schema = 'public' order by 1`;
-      expect(tables.map((t) => t.table_name)).toEqual(["members", "messages", "page_versions", "pages", "threads"]);
+      expect(tables.map((t) => t.table_name)).toEqual(["ai_jobs", "members", "messages", "outbox_events", "page_versions", "pages", "threads"]);
       const applied = await db`select count(*)::int as n from drizzle.__drizzle_migrations`;
-      expect(applied[0]!.n).toBe(3);
+      expect(applied[0]!.n).toBe(4);
     } finally {
       await db.end();
     }
@@ -77,7 +77,7 @@ describe("migration runner (node migrate.ts)", () => {
         const privileges = await db`
           select table_name, string_agg(privilege_type, ',' order by privilege_type) as p
           from information_schema.role_table_grants where grantee = 'draftpage_app' group by 1 order by 1`;
-        expect(privileges).toHaveLength(5);
+        expect(privileges).toHaveLength(7);
         for (const row of privileges) expect(row.p).toBe("DELETE,INSERT,SELECT,UPDATE");
         // No DDL: it can't drop or alter tables.
         await db`set role draftpage_app`;

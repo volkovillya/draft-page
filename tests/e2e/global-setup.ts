@@ -18,10 +18,10 @@ export default async function globalSetup() {
   } finally {
     await admin.end();
   }
-  const client = postgres(E2E_DATABASE_URL, { max: 1 });
+  const client = postgres(E2E_DATABASE_URL, { max: 1, onnotice: () => {} });
   await migrate(drizzle({ client }), { migrationsFolder: "./drizzle" });
   // Every run starts from an empty e2e database (never the dev database).
-  await client`truncate table pages, members restart identity cascade`;
+  await client`truncate table outbox_events, pages, members restart identity cascade`;
   await client.end();
 }
 
