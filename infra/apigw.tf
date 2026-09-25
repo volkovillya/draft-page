@@ -28,6 +28,24 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_burst_limit = 50
   }
 
+  # One JSON line per request. integrationError says why API Gateway couldn't get an answer
+  # from the app (e.g. a reset connection), which is what a 503 alone never tells you.
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_access.arn
+    format = jsonencode({
+      requestId         = "$context.requestId"
+      time              = "$context.requestTime"
+      method            = "$context.httpMethod"
+      path              = "$context.path"
+      routeKey          = "$context.routeKey"
+      status            = "$context.status"
+      integrationStatus = "$context.integrationStatus"
+      integrationError  = "$context.integrationErrorMessage"
+      latencyMs         = "$context.responseLatency"
+      integrationMs     = "$context.integrationLatency"
+    })
+  }
+
   tags = { Name = "draftpage" }
 }
 
@@ -85,6 +103,12 @@ resource "aws_apigatewayv2_integration" "app" {
   integration_uri        = aws_service_discovery_service.app.arn
   payload_format_version = "1.0"
   timeout_milliseconds   = 30000 # API Gateway's maximum; plenty for page renders
+
+  # Public traffic can never claim to be the AI worker: whatever this header says, API
+  # Gateway replaces it with "none" (the app only trusts it on the signed route below).
+  request_parameters = {
+    "overwrite:header.x-draftpage-caller-arn" = "none"
+  }
 }
 
 # "$default" catches every path (/, /pages, /api/..., /_next/static/...).
@@ -92,4 +116,43 @@ resource "aws_apigatewayv2_route" "default" {
   api_id    = aws_apigatewayv2_api.web.id
   route_key = "$default"
   target    = "integrations/${aws_apigatewayv2_integration.app.id}"
+}
+
+# ---- Phase 3 step 7: the worker-only route (decision D11) -----------------------------
+#
+#   Lambda ──SigV4-signed──▶ ANY /api/internal/{proxy+} (IAM auth) ──VPC Link──▶ app
+#
+# API Gateway verifies the AWS signature and the caller's execute-api:Invoke permission
+# before forwarding, so unsigned or other callers get 403 without reaching the app. It then
+# passes the verified caller (an assumed-role ARN) in a header, which the app checks against
+# DRAFTPAGE_WORKER_ROLE_ARN as a second line of defence. No keys or shared secrets.
+
+resource "aws_apigatewayv2_integration" "app_internal" {
+  api_id                 = aws_apigatewayv2_api.web.id
+  integration_type       = "HTTP_PROXY"
+  integration_method     = "ANY"
+  connection_type        = "VPC_LINK"
+  connection_id          = aws_apigatewayv2_vpc_link.main.id
+  integration_uri        = aws_service_discovery_service.app.arn
+  payload_format_version = "1.0"
+  timeout_milliseconds   = 30000
+
+  request_parameters = {
+    "overwrite:header.x-draftpage-caller-arn" = "$context.identity.userArn"
+  }
+}
+
+# More specific than $default, so every /api/internal/* request lands here, signed or not.
+resource "aws_apigatewayv2_route" "internal" {
+  api_id             = aws_apigatewayv2_api.web.id
+  route_key          = "ANY /api/internal/{proxy+}"
+  authorization_type = "AWS_IAM"
+  target             = "integrations/${aws_apigatewayv2_integration.app_internal.id}"
+}
+
+# Access logs for the HTTP API (a few hundred bytes per request, kept two weeks).
+resource "aws_cloudwatch_log_group" "api_access" {
+  name              = "/aws/apigateway/draftpage"
+  retention_in_days = 14
+  tags              = { Name = "draftpage-api-access" }
 }

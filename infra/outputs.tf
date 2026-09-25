@@ -70,3 +70,16 @@ output "ai_jobs_queue_url" {
 output "ai_jobs_queue_arn" {
   value = aws_sqs_queue.ai_jobs.arn
 }
+
+output "ai_jobs_dlq_url" {
+  value = aws_sqs_queue.ai_jobs_dlq.url
+}
+
+output "ai_worker_role_arn" {
+  description = "The app accepts /api/internal/* only from this role (DRAFTPAGE_WORKER_ROLE_ARN)."
+  value       = aws_iam_role.ai_worker.arn
+}
+
+output "ai_worker_function_name" {
+  value = aws_lambda_function.ai_worker.function_name
+}

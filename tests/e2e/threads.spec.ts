@@ -147,7 +147,7 @@ test.describe("pinned comment threads", () => {
     await expect(page.frameLocator("iframe").locator("h1")).toHaveText("Hello"); // still on v1
     // The version menu lists Claude's draft without a reload.
     await page.locator("header button[aria-haspopup=menu]").click();
-    await expect(page.getByRole("menu", { name: "Page menu" })).toContainText("Version 2");
+    await expect(page.getByRole("menu", { name: "Page menu" })).toContainText("Version 2", { timeout: 10_000 });
     await page.keyboard.press("Escape");
     await expect(page.locator("header button[aria-haspopup=menu]")).toContainText("v1"); // no jump
     await page.getByRole("button", { name: "Thread 1, open" }).click(); // the menu closed the card
@@ -157,6 +157,26 @@ test.describe("pinned comment threads", () => {
     // The pretend edit is an invisible HTML comment: the page looks exactly the same.
     await expect(page.frameLocator("iframe").locator("h1")).toHaveText("Hello");
     await expect(page.getByRole("button", { name: "Publish", exact: true })).toBeVisible(); // still a draft: only a person publishes
+  });
+
+  test("the version menu still catches up when refreshing it fails once (a 503)", async ({ page }) => {
+    // Like the intermittent 503s behind API Gateway: the first server render that would bring
+    // Claude's version into the menu fails. The page must recover without a manual reload.
+    let failed = 0;
+    await page.route(/\/pages\/[^/?]+\?n=1/, async (route) => {
+      if (route.request().headers()["rsc"] && failed === 0) {
+        failed += 1;
+        return route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"Service Unavailable"}' });
+      }
+      return route.continue();
+    });
+    await pinComment(page, "h1", "@Claude make the headline bigger");
+    const rail = page.getByRole("complementary", { name: "Comments" });
+    await expect(rail).toContainText("Claude made v2", { timeout: 15_000 });
+    await page.locator("header button[aria-haspopup=menu]").click();
+    await expect(page.getByRole("menu", { name: "Page menu" })).toContainText("Version 2", { timeout: 10_000 });
+    expect(failed).toBe(1); // the 503 really happened
+    await expect(page.locator("header button[aria-haspopup=menu]")).toContainText("v1"); // and no jump to v2
   });
 
   test("a failed @Claude request says why", async ({ page }) => {

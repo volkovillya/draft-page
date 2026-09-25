@@ -123,6 +123,11 @@ resource "aws_ecs_task_definition" "app" {
         # address in HOSTNAME. 0.0.0.0 = every interface, so the health check on 127.0.0.1
         # and the VPC Link on the task IP can both reach it.
         { name = "HOSTNAME", value = "0.0.0.0" },
+        # Node closes idle keep-alive connections after 5 s by default, while API Gateway's
+        # VPC Link keeps its connections to the task open much longer. When it reuses one Node
+        # has just closed, the request fails with a 503. Keeping connections open longer than
+        # the VPC Link does (≈350 s, the NLB idle timeout it's built on) removes that race.
+        { name = "KEEP_ALIVE_TIMEOUT", value = "360000" },
         { name = "APP_BASE_URL", value = aws_apigatewayv2_api.web.api_endpoint },
         { name = "AUTH0_DOMAIN", value = var.auth0_domain },
         { name = "AUTH0_CLIENT_ID", value = var.auth0_client_id },
@@ -134,6 +139,10 @@ resource "aws_ecs_task_definition" "app" {
         { name = "DRAFTPAGE_DB_USER", value = local.db_app_user },
         { name = "DRAFTPAGE_DB_IAM_AUTH", value = "true" },
         { name = "DRAFTPAGE_DATABASE_SSL", value = "verify-full" },
+        # Phase 3: the outbox relay publishes AI jobs here, and /api/internal/* accepts only
+        # callers signed as the worker Lambda's role (decision D11).
+        { name = "DRAFTPAGE_AI_QUEUE_URL", value = aws_sqs_queue.ai_jobs.url },
+        { name = "DRAFTPAGE_WORKER_ROLE_ARN", value = aws_iam_role.ai_worker.arn },
       ]
       secrets = [
         { name = "AUTH0_SECRET", valueFrom = "${aws_secretsmanager_secret.auth0.arn}:AUTH0_SECRET::" },

@@ -5,6 +5,7 @@
 #   3. run the migrations with that image (scripts/aws-migrate.sh)
 #   4. the script sets app_image_tag in infra/terraform.tfvars; YOU plan + apply (app moves)
 #   5. check the live URL
+# After each of your applies it checks AWS really uses the new tag before going on.
 # Terraform plan/apply are never run by this script; it prints them and waits for you.
 # Usage: bash scripts/aws-deploy.sh [tag]   (default: git commit hash, else a timestamp)
 source "$(dirname "$0")/aws-lib.sh"
@@ -28,22 +29,26 @@ docker build --quiet --platform linux/arm64 -t "$REPO:$TAG" . >/dev/null
 docker push --quiet "$REPO:$TAG" >/dev/null
 echo "  pushed"
 
-echo "▸ 2/5 point the migrate task at the new image. Run:"
+echo "▸ 2/5 point the migrate task at the new image. In a SECOND terminal (keep this one open), run:"
 echo "    terraform -chdir=infra plan -var migrate_image_tag=$TAG -out=deploy-migrate.tfplan"
 echo "    terraform -chdir=infra apply deploy-migrate.tfplan"
 echo "  Expected plan: 1 to add, 0 to change, 1 to destroy (aws_ecs_task_definition.migrate only)."
 pause_for
+wait_for_tag "migrate task" "$TAG" "task_family_tag draftpage-migrate"
 
 echo "▸ 3/5 migrate"
 bash scripts/aws-migrate.sh
 
-echo "▸ 4/5 move the app. Setting app_image_tag = \"$TAG\" in infra/terraform.tfvars, then run:"
+echo "▸ 4/5 move the app. Setting app_image_tag = \"$TAG\" in infra/terraform.tfvars. In your SECOND terminal, run:"
 sed -i '' -E "s/^app_image_tag( *)= \".*\"/app_image_tag\1= \"$TAG\"/" infra/terraform.tfvars
 echo "    terraform -chdir=infra plan -out=deploy-app.tfplan"
 echo "    terraform -chdir=infra apply deploy-app.tfplan"
 echo "  Expected plan: 1 to add, 1 to change, 1 to destroy (app task definition replaced,"
 echo "  service updated). Apply waits until the new task is healthy; a failing one is rolled back."
 pause_for
+CLUSTER=$(tf_out ecs_cluster_name)
+SERVICE=$(tf_out ecs_service_name)
+wait_for_tag "running app service" "$TAG" "service_tag $CLUSTER $SERVICE"
 
 echo "▸ 5/5 check $URL"
 curl -fsS "$URL/api/health?db=1" && echo

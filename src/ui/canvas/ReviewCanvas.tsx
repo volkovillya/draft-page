@@ -107,23 +107,28 @@ export function ReviewCanvas({
   // (only while the tab is visible) so its reply and status show up without a reload. Only
   // the threads: a full refresh would jump to Claude's new version while you're reviewing.
   const aiBusy = threads.some((t) => t.aiJob?.status === "pending" || t.aiJob?.status === "processing");
+  // Claude made a version the version menu doesn't list yet. Stays true until a server render
+  // brings it, so a failed refresh (e.g. a 503) is simply retried on the next tick.
+  const versionsBehind = threads.some(
+    (t) => t.aiJob?.resultVersionNumber != null && !page.versions.some((v) => v.number === t.aiJob!.resultVersionNumber),
+  );
   useEffect(() => {
-    if (!aiBusy) return;
+    if (!aiBusy && !versionsBehind) return;
+    // Re-render on the server with this version pinned in the URL, so the menu updates without
+    // jumping to Claude's version (the default is "live, else newest"). One call, never both.
+    const syncVersions = () => {
+      const pinned = new URLSearchParams(window.location.search).get("n") === String(version.number);
+      if (pinned) router.refresh();
+      else router.replace(`/pages/${encodeURIComponent(shortId)}?n=${version.number}`, { scroll: false });
+    };
+    if (versionsBehind) syncVersions();
     const timer = setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      fetchThreads(shortId, version.number).then((next) => {
-        setThreads(next);
-        // Claude made a version this page doesn't list yet: re-render with the current version
-        // pinned in the URL, so the version menu updates without jumping to the new version.
-        const known = new Set(page.versions.map((v) => v.number));
-        if (next.some((t) => t.aiJob?.resultVersionNumber && !known.has(t.aiJob.resultVersionNumber))) {
-          router.replace(`/pages/${encodeURIComponent(shortId)}?n=${version.number}`, { scroll: false });
-          router.refresh();
-        }
-      }, () => {}); // next tick retries
+      if (versionsBehind) return syncVersions();
+      fetchThreads(shortId, version.number).then(setThreads, () => {}); // next tick retries
     }, AI_POLL_MS);
     return () => clearInterval(timer);
-  }, [aiBusy, shortId, version.number, page.versions, router]);
+  }, [aiBusy, versionsBehind, shortId, version.number, router]);
 
   // On a phone the comments open as a sheet over the page, so start with them closed.
   useEffect(() => {

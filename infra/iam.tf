@@ -92,6 +92,12 @@ data "aws_iam_policy_document" "app" {
     # This database, this user only. The admin user can't be reached with this role.
     resources = ["arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${aws_db_instance.main.resource_id}/${local.db_app_user}"]
   }
+  # Phase 3: the outbox relay in the app publishes each "@Claude" job to the queue.
+  statement {
+    sid       = "PublishAiJobs"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.ai_jobs.arn]
+  }
   # ECS Exec: lets you open a shell or a port-forward tunnel (e.g. laptop → RDS) through the
   # task with `aws ssm start-session`. The agent needs these message channels; they have no
   # resource-level scoping.

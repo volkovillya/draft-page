@@ -62,3 +62,23 @@ variable "auth0_client_id" {
   description = "Auth0 application client id (not secret). Set in terraform.tfvars."
   type        = string
 }
+
+variable "ai_editor" {
+  description = <<-EOT
+    Which HTML editor the AI worker uses: "fake" (no model; an invisible edit) or "bedrock".
+    Stays "fake" until the account can call Bedrock (the Free plan allows 0 tokens a day).
+  EOT
+  type        = string
+  default     = "fake"
+
+  validation {
+    condition     = contains(["fake", "bedrock"], var.ai_editor)
+    error_message = "ai_editor must be \"fake\" or \"bedrock\"."
+  }
+}
+
+variable "ai_model_id" {
+  description = "Bedrock model or inference profile id for ai_editor = \"bedrock\" (empty while fake)."
+  type        = string
+  default     = ""
+}

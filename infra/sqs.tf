@@ -5,7 +5,7 @@
 # SQS holds each job until the worker has finished it, so a worker or model outage only
 # delays jobs instead of losing them. Delivery is at least once: the same job can arrive
 # twice, which the worker and the database's unique job key already tolerate.
-# The dead-letter queue (jobs that keep failing) is added in the next step.
+# Jobs that keep failing without reporting back move to the dead-letter queue (4b, below).
 
 resource "aws_sqs_queue" "ai_jobs" {
   name = "draftpage-ai-jobs"
@@ -25,5 +25,36 @@ resource "aws_sqs_queue" "ai_jobs" {
   # Encryption at rest with an SQS-owned key: free and nothing to manage.
   sqs_managed_sse_enabled = true
 
+  # After 3 receives without success (the worker crashed or timed out every time), SQS moves
+  # the message to the dead-letter queue instead of retrying forever. Matches the worker's
+  # MAX_JOB_ATTEMPTS: on the 3rd attempt it normally marks the job failed itself, so only
+  # jobs whose worker couldn't even report back end up in the DLQ.
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.ai_jobs_dlq.arn
+    maxReceiveCount     = 3
+  })
+
   tags = { Name = "draftpage-ai-jobs" }
+}
+
+# ---- 4b: the dead-letter queue ----------------------------------------------------------
+
+resource "aws_sqs_queue" "ai_jobs_dlq" {
+  name = "draftpage-ai-jobs-dlq"
+
+  # The longest SQS allows (14 days), so there's time to look at what failed and why.
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+
+  tags = { Name = "draftpage-ai-jobs-dlq" }
+}
+
+# Only the job queue may send its failures here. A separate resource, because the main
+# queue already points at the DLQ and the DLQ can't point back in the same block (a cycle).
+resource "aws_sqs_queue_redrive_allow_policy" "ai_jobs_dlq" {
+  queue_url = aws_sqs_queue.ai_jobs_dlq.id
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue"
+    sourceQueueArns   = [aws_sqs_queue.ai_jobs.arn]
+  })
 }

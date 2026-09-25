@@ -46,3 +46,6 @@ dist/
 .idea/
 npm-debug.log*
 .terraform.tfstate.lock.info
+
+# Built Lambda packages (scripts/build-worker.sh)
+infra/build/
