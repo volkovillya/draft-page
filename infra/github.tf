@@ -11,6 +11,10 @@
 
 locals {
   github_repo = "volkovillya/draft-page"
+  # GitHub's OIDC "sub" names the owner and repository with their permanent numeric IDs
+  # (seen in CloudTrail on the first run). IDs never change, so a renamed or re-created
+  # repository with the same name can't match.
+  github_sub_repo = "volkovillya@31091159/draft-page@1387594357"
 }
 
 # Tells AWS to trust tokens signed by GitHub Actions. AWS verifies GitHub's certificate
@@ -38,7 +42,7 @@ data "aws_iam_policy_document" "github_ops_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.github_repo}:ref:refs/heads/main"]
+      values   = ["repo:${local.github_sub_repo}:ref:refs/heads/main"]
     }
   }
 }
