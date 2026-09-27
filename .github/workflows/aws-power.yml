@@ -1,0 +1,97 @@
+# Pause or resume DraftPage on AWS from anywhere (the GitHub app works on a phone):
+# Actions → "AWS power" → Run workflow → status / pause / resume.
+#
+# Same steps as scripts/aws-pause.sh and scripts/aws-resume.sh. Signs in to AWS with GitHub's
+# OIDC token (no stored keys) as draftpage-github-ops, which may only scale the app service
+# and stop/start the database (infra/github.tf), and only from the main branch.
+name: AWS power
+run-name: "AWS ${{ inputs.action }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [status, pause, resume]
+        default: status
+
+permissions:
+  id-token: write # ask GitHub for the OIDC token
+  contents: read
+
+# One at a time: a pause and a resume never race each other.
+concurrency:
+  group: aws-power
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-north-1
+  CLUSTER: draftpage
+  SERVICE: draftpage-app
+  DB: draftpage
+  APP_URL: https://e98xq5y62m.execute-api.eu-north-1.amazonaws.com
+
+jobs:
+  power:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Sign in to AWS (OIDC, one-hour credentials)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::114990992449:role/draftpage-github-ops
+          role-session-name: draftpage-power-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ${{ inputs.action }}
+        env:
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          db_state() { aws rds describe-db-instances --db-instance-identifier "$DB" --query 'DBInstances[0].DBInstanceStatus' --output text; }
+          tasks() { aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].[desiredCount,runningCount]' --output text; }
+          # Waits while the database is between states (starting, stopping, backing-up…).
+          settle_db() {
+            local s
+            while s=$(db_state) && [ "$s" != available ] && [ "$s" != stopped ]; do echo "  database is $s…"; sleep 20; done
+            echo "$s"
+          }
+          report() {
+            read -r desired running < <(tasks)
+            health=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$APP_URL/api/health" || true)
+            {
+              echo "### DraftPage: $ACTION"
+              echo "| | |"
+              echo "|---|---|"
+              echo "| Database | $(db_state) |"
+              echo "| App tasks | $running running of $desired wanted |"
+              echo "| Health check | $health |"
+              echo "| URL | $APP_URL |"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+
+          case "$ACTION" in
+            status) ;;
+            pause)
+              echo "▸ app → 0 tasks"
+              aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count 0 >/dev/null
+              aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+              if [ "$(settle_db | tail -1)" = available ]; then
+                echo "▸ stopping the database"
+                aws rds stop-db-instance --db-instance-identifier "$DB" >/dev/null
+              fi
+              ;;
+            resume)
+              if [ "$(settle_db | tail -1)" = stopped ]; then
+                echo "▸ starting the database (usually 3–6 minutes)"
+                aws rds start-db-instance --db-instance-identifier "$DB" >/dev/null
+              fi
+              aws rds wait db-instance-available --db-instance-identifier "$DB"
+              echo "▸ app → 1 task"
+              aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count 1 >/dev/null
+              aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+              ;;
+          esac
+          report

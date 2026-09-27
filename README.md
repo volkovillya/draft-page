@@ -139,6 +139,8 @@ npm run aws:db-tunnel           # laptop → production database through the tas
 
 `aws:deploy` never runs Terraform itself. It prints each `plan`/`apply` command, waits, and checks on AWS that the apply really happened before going on. Migrations always run with the new image before the app moves to it, so new code never starts against an old schema. Every script first checks that the session belongs to the DraftPage account, and Terraform's `allowed_account_ids` does the same. After worker code changes, run `npm run build:worker` before `terraform plan`.
 
+**From a phone:** GitHub → Actions → **AWS power** → Run workflow → `status`, `pause` or `resume`. It does what the pause/resume scripts do, signed in with GitHub's OIDC token as `draftpage-github-ops` (`infra/github.tf`). No AWS keys are stored in GitHub; the role only accepts runs from this repository's `main` branch and may only scale the app service and stop or start the database. A resume takes about 5–10 minutes (the database starts first).
+
 ## AI processing flow
 
 ```text
@@ -170,7 +172,6 @@ Order matters: the app's AI limits must be running on AWS before the worker can 
 5. **Try one edit** and read `/aws/lambda/draftpage-ai-worker` for its tokens, cost and latency.
 6. **After the first Bedrock charge shows up** in Cost Explorer, note the service name it's billed under and narrow `infra/ai-kill-switch.tf` to AI costs only.
 
-Also after the upgrade: raise `backup_retention_period` to 7 in `infra/rds.tf` (the Free plan caps it at 1).
 
 ### Cost guards
 
@@ -209,7 +210,7 @@ None of these stops the fixed costs (≈ $29/month running); `npm run aws:pause`
 
 - One Fargate task and no load balancer: no high availability. Deploys start the new task before stopping the old one, but a crash means a short outage until ECS replaces the task.
 - API Gateway buffers responses (no streaming) and allows 30 seconds per request.
-- The account is on the AWS Free plan, which caps RDS automated backups at 1 day (take a manual snapshot before risky changes) and gives Bedrock 0 tokens a day. Until the upgrade, AI jobs run with the stand-in editor, which makes an invisible edit; the rest of the pipeline is real.
+- New AWS accounts start with a Bedrock allowance of 0 tokens a day, even on the Paid plan, until AWS raises it. Until then, AI jobs run with the stand-in editor, which makes an invisible edit; the rest of the pipeline is real.
 - Pins remember elements by position (for example "the first `div`"), so an edit that inserts elements earlier on the page can move them in the new version.
 - Follow-up `@Claude` requests in replies aren't supported yet: one thread is one request.
 - Every member with access can see every page; there are no per-page permissions yet.

@@ -51,10 +51,10 @@ resource "aws_db_instance" "main" {
   multi_az                            = false # single-AZ on purpose (master prompt §16)
   port                                = 5432
 
-  # Backups: daily automated snapshots with point-in-time restore inside the window.
-  # The Free plan caps retention at 1 day (FreeTierRestrictionError above that); raise it to
-  # 7 after upgrading the account plan. Backup storage up to the database size is free.
-  backup_retention_period = 1
+  # Backups: daily automated snapshots with point-in-time restore to any second in the last
+  # 7 days. (The Free plan capped this at 1 day.) Backup storage up to the database size
+  # (20 GB) is free, so this costs $0. Going from 1 to 7 needs no restart.
+  backup_retention_period = 7
   backup_window           = "02:00-03:00"         # UTC
   maintenance_window      = "sun:03:30-sun:04:30" # UTC, after the backup
   copy_tags_to_snapshot   = true

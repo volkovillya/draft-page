@@ -83,3 +83,8 @@ output "ai_worker_role_arn" {
 output "ai_worker_function_name" {
   value = aws_lambda_function.ai_worker.function_name
 }
+
+output "github_ops_role_arn" {
+  description = "Role the pause/resume GitHub workflow assumes (set as the AWS_OPS_ROLE_ARN repository variable)"
+  value       = aws_iam_role.github_ops.arn
+}
