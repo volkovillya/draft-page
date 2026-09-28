@@ -1,0 +1,48 @@
+# Known vulnerabilities in npm dependencies (GitHub Advisory Database, via `npm audit`).
+# - Pull requests that change dependencies: one sticky comment with the findings and fixes.
+# - Weekly on main: one issue, kept up to date and closed when the audit is clean.
+# Fails only on high/critical in production dependencies. Reads package-lock.json only:
+# nothing is installed and no install scripts run. No secrets, no AWS.
+name: Dependency audit
+
+on:
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - .nvmrc
+      - .github/workflows/deps-audit.yml
+      - scripts/deps-audit/**
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deps-audit-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write # the sticky PR comment
+      issues: write # the weekly issue on main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Audit and report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/deps-audit/run.ts
