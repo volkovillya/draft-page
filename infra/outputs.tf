@@ -88,3 +88,8 @@ output "github_ops_role_arn" {
   description = "Role the pause/resume GitHub workflow assumes (set as the AWS_OPS_ROLE_ARN repository variable)"
   value       = aws_iam_role.github_ops.arn
 }
+
+output "github_reviewer_role_arn" {
+  description = "Set as the AI_REVIEW_ROLE_ARN repository variable (Settings → Secrets and variables → Actions → Variables)."
+  value       = aws_iam_role.github_reviewer.arn
+}
