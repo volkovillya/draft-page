@@ -14,10 +14,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ai-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
     name: AI review (advisory)
@@ -29,6 +25,11 @@ jobs:
       (github.event.action != 'labeled' || github.event.label.name == 'ai-review')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # On the job, not the workflow: a skipped run (e.g. another label added) must not cancel
+    # a review that is running. A new review of the same PR still replaces the old one.
+    concurrency:
+      group: ai-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       contents: read
       id-token: write # OIDC login to AWS

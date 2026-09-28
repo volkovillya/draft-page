@@ -8,6 +8,7 @@ import {
   parseAudit,
   prComment,
   stepSummary,
+  updatesMainIssue,
   type AuditJson,
   type Lockfile,
   type Severity,
@@ -181,5 +182,13 @@ describe("markdown", () => {
     expect(body).toContain(MARKER);
     expect(body).toContain("weekly audit of `main`");
     expect(body).toContain("| esbuild |");
+  });
+});
+
+describe("updatesMainIssue", () => {
+  it("only a run on main updates the weekly issue", () => {
+    expect(updatesMainIssue("refs/heads/main")).toBe(true);
+    expect(updatesMainIssue("refs/heads/fix/x")).toBe(false);
+    expect(updatesMainIssue(undefined)).toBe(false);
   });
 });

@@ -20,13 +20,16 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
       continue;
     }
     if (!file) continue;
-    if (line.startsWith("+++ ")) {
-      if (line !== "+++ /dev/null") file.path = line.slice(4).replace(/^b\//, "");
-      else file.deleted = true;
-      continue;
-    }
-    if (line.startsWith("--- ") || line.startsWith("index ") || /^(new|deleted) file mode|^similarity|^rename /.test(line)) {
-      continue;
+    // Header lines come only before a file's first hunk; after it, "+++ x" is an added "++ x".
+    if (!file.patch) {
+      if (line.startsWith("+++ ")) {
+        if (line !== "+++ /dev/null") file.path = line.slice(4).replace(/^b\//, "");
+        else file.deleted = true;
+        continue;
+      }
+      if (line.startsWith("--- ") || line.startsWith("index ") || /^(new|deleted) file mode|^similarity|^rename /.test(line)) {
+        continue;
+      }
     }
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
@@ -91,4 +94,17 @@ export function selectFiles(files: DiffFile[], maxBytes: number): Selection {
     }
   }
   return { included, omitted };
+}
+
+export type Plan = { kind: "skip" } | { kind: "too-large"; omitted: string[] } | ({ kind: "review" } & Selection);
+
+/**
+ * What a run does with a diff: nothing when only docs, lockfiles or other unreviewed files
+ * changed; no model call when every reviewable file is over the budget; otherwise a review.
+ */
+export function planReview(files: DiffFile[], maxBytes: number): Plan {
+  if (files.length === 0 || docsOnly(files.map((f) => f.path))) return { kind: "skip" };
+  const selection = selectFiles(files, maxBytes);
+  if (selection.included.length > 0) return { kind: "review", ...selection };
+  return selection.omitted.length > 0 ? { kind: "too-large", omitted: selection.omitted } : { kind: "skip" };
 }

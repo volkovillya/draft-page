@@ -2,10 +2,10 @@
 #
 #   browser ──HTTPS──▶ API Gateway (HTTP API) ──VPC Link──▶ Cloud Map ──▶ Fargate task :3000
 #
-# This part creates only the API and its stage, which gives DraftPage a permanent URL with
-# a TLS certificate managed by AWS: https://<id>.execute-api.eu-north-1.amazonaws.com
-# The route to the app (VPC Link, Cloud Map, integration) comes in 8d. Until then every
-# request gets a 404 from API Gateway. Cost: $1.06 per million requests, so ≈ $0 here.
+# The API and its stage give DraftPage a permanent URL with a TLS certificate managed by AWS:
+# https://<id>.execute-api.eu-north-1.amazonaws.com. Below: the VPC Link and Cloud Map that
+# reach the task, the `$default` route to the app, and `ANY /api/internal/{proxy+}`, which
+# only the AI worker's role may call (AWS_IAM). Cost: $1.06 per million requests, so ≈ $0.
 
 resource "aws_apigatewayv2_api" "web" {
   name          = "draftpage"

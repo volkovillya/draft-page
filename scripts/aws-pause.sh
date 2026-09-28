@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Pauses DraftPage to save credits: the app goes to 0 tasks (no Fargate or public-IP cost)
 # and the database stops (storage keeps billing, ~$2.40/month). Paused ≈ $4/month in total.
-# AWS starts a stopped database again by itself after 7 days; run this again to re-stop it.
+# AWS starts a stopped database again by itself after 7 days; infra/cost-guards.tf stops it
+# again automatically (EventBridge + SSM) and emails you when it starts.
 # Resume with scripts/aws-resume.sh. No Terraform changes: Terraform ignores the task count.
 source "$(dirname "$0")/aws-lib.sh"
 require_session
@@ -21,4 +22,4 @@ if [ "$state" = available ]; then
 else
   echo "▸ database is '$state', leaving it"
 fi
-echo "✓ paused. Note: AWS restarts a stopped database automatically after 7 days."
+echo "✓ paused. AWS restarts a stopped database after 7 days; it is stopped again automatically."

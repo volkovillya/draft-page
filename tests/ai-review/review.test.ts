@@ -9,7 +9,7 @@ import {
   SUMMARY_MARKER,
   summaryComment,
 } from "../../scripts/ai-review/comments";
-import { docsOnly, isReviewed, parseUnifiedDiff, selectFiles } from "../../scripts/ai-review/diff";
+import { docsOnly, isReviewed, parseUnifiedDiff, planReview, selectFiles } from "../../scripts/ai-review/diff";
 import { callReviewModel, ModelUnavailable } from "../../scripts/ai-review/model";
 import {
   type Answer,
@@ -63,6 +63,40 @@ describe("parseUnifiedDiff", () => {
     expect(f.patch).toContain("   - const y = 2;");
     expect(f.patch).toContain("11+ const y = 3;");
     expect(f.patch).toContain("13  return x;");
+  });
+  it("reads code lines that look like headers once a hunk has started", () => {
+    const tricky = `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,2 +1,2 @@
+--- old comment line
++++ new comment line
+ kept
+`;
+    const [f] = parseUnifiedDiff(tricky);
+    expect(f!.path).toBe("src/a.ts");
+    expect(f!.patch).toContain("   - -- old comment line");
+    expect(f!.patch).toContain("1+ ++ new comment line");
+    expect([...f!.lines]).toEqual([1, 2]);
+  });
+});
+
+describe("planReview", () => {
+  const mk = (path: string, size = 10) => ({ path, deleted: false, patch: "x".repeat(size), lines: new Set([1]) });
+
+  it("skips docs-only and unreviewed-only changes without calling the model", () => {
+    expect(planReview([], 100).kind).toBe("skip");
+    expect(planReview([mk("README.md")], 100).kind).toBe("skip");
+    expect(planReview([mk("drizzle/meta/0006_snapshot.json"), mk("public/logo.png")], 100).kind).toBe("skip");
+  });
+
+  it("reports a diff whose every reviewable file is over the budget", () => {
+    expect(planReview([mk("src/big.ts", 500)], 100)).toEqual({ kind: "too-large", omitted: ["src/big.ts"] });
+  });
+
+  it("reviews what fits", () => {
+    const plan = planReview([mk("src/a.ts"), mk("src/big.ts", 500)], 100);
+    expect(plan).toMatchObject({ kind: "review", omitted: ["src/big.ts"] });
   });
 });
 
@@ -237,6 +271,15 @@ describe("comments", () => {
     expect(body).toContain("| This run | 1 | 18,432 | 2,105 | $0.0040 |");
     expect(body).toContain("| This PR | 2 | 35,110 | 3,870 | $0.0076 |");
     expect(readTotals(body)).toEqual(totals);
+  });
+
+  it("cleans the unavailable reason and the omitted paths too", () => {
+    const base = { modelId: "m", sha: "abcdef0", usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 }, totals: NO_TOTALS };
+    const body = summaryComment({ ...base, status: "unavailable", reason: "big <!-- x --> @someone" });
+    expect(body).not.toContain("<!-- x");
+    expect(body).toContain("@\u200bsomeone");
+    const reviewed = summaryComment({ ...base, status: "reviewed", omitted: ["src/<b>.ts"] });
+    expect(reviewed).toContain("src/&lt;b>.ts");
   });
 
   it("says when the review was unavailable or capped, and still shows usage", () => {
