@@ -74,3 +74,55 @@ resource "aws_budgets_budget" "daily" {
     subscriber_email_addresses = [var.budget_alert_email]
   }
 }
+
+# Step emails (owner request 2026-09-28): one email each time this month's usage, before
+# credits and tax, passes $3, $5, $10, $20 and $30. A month running all the time (≈ $29)
+# sends four of them; a mostly paused month one or two. AWS allows 5 alerts per budget.
+resource "aws_budgets_budget" "steps" {
+  name         = "draftpage-usage-steps"
+  budget_type  = "COST"
+  time_unit    = "MONTHLY"
+  limit_amount = "30.0"
+  limit_unit   = "USD"
+  metrics      = ["UnblendedCost"]
+
+  filter_expression {
+    not {
+      dimensions {
+        key    = "RECORD_TYPE"
+        values = ["Credit", "Tax"]
+      }
+    }
+  }
+
+  dynamic "notification" {
+    for_each = [3, 5, 10, 20, 30]
+    content {
+      notification_type          = "ACTUAL"
+      comparison_operator        = "GREATER_THAN"
+      threshold                  = notification.value
+      threshold_type             = "ABSOLUTE_VALUE"
+      subscriber_email_addresses = [var.budget_alert_email]
+    }
+  }
+}
+
+# "Something is charged to the card": the bill after credits (and with tax) passes one cent.
+# Stays silent while the credits cover everything; fires when they run out or expire, or for
+# charges they don't cover (e.g. some AWS Marketplace products).
+resource "aws_budgets_budget" "out_of_pocket" {
+  name         = "draftpage-charged-to-card"
+  budget_type  = "COST"
+  time_unit    = "MONTHLY"
+  limit_amount = "1.0"
+  limit_unit   = "USD"
+  # No filter and no metrics: the plain unblended bill, credits and tax included.
+
+  notification {
+    notification_type          = "ACTUAL"
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 0.01
+    threshold_type             = "ABSOLUTE_VALUE"
+    subscriber_email_addresses = [var.budget_alert_email]
+  }
+}
