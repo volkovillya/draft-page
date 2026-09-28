@@ -4,6 +4,9 @@
 docs/
 *.md
 !/README.md
+# Project rules for coding assistants (company-free, written for this repo)
+!/CLAUDE.md
+!/AGENTS.md
 
 # dependencies
 node_modules/
