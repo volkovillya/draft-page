@@ -11,7 +11,15 @@ import {
 } from "../../scripts/ai-review/comments";
 import { docsOnly, isReviewed, parseUnifiedDiff, selectFiles } from "../../scripts/ai-review/diff";
 import { callReviewModel, ModelUnavailable } from "../../scripts/ai-review/model";
-import { type Answer, buildPrompt, MAX_INLINE, parseAnswer, placeFindings, TOOL_NAME } from "../../scripts/ai-review/review";
+import {
+  type Answer,
+  buildPrompt,
+  MAX_INLINE,
+  parseAnswer,
+  placeFindings,
+  TOOL_NAME,
+  validFix,
+} from "../../scripts/ai-review/review";
 
 const DIFF = `diff --git a/src/server/core/pages.ts b/src/server/core/pages.ts
 index 1111111..2222222 100644
@@ -157,6 +165,43 @@ describe("placeFindings", () => {
     expect(inline).toHaveLength(MAX_INLINE);
     expect(inline[0]!.title).toBe("crit");
     expect(other.map((f) => f.title)).toEqual(["m4", "m5", "low"]);
+  });
+});
+
+describe("one-click suggestions", () => {
+  const files = parseUnifiedDiff(DIFF);
+  const lines = files[0]!.lines; // 10..13
+
+  it("accepts a short run of lines shown in the diff, and anchors the comment on its last line", () => {
+    const fix = { startLine: 11, endLine: 12, code: "const y = 3;\nconst z = y + 1;\n" };
+    expect(validFix(fix, lines)).toEqual({ ...fix, code: "const y = 3;\nconst z = y + 1;" });
+    const { inline } = placeFindings({ summary: "", findings: [finding({ line: 40, fix })] }, files);
+    expect(inline[0]).toMatchObject({ line: 12, fix: { startLine: 11, endLine: 12 } });
+  });
+
+  it("drops a suggestion outside the diff, too long, or able to break out of its block", () => {
+    expect(validFix({ startLine: 12, endLine: 14, code: "x" }, lines)).toBeUndefined();
+    expect(validFix({ startLine: 12, endLine: 11, code: "x" }, lines)).toBeUndefined();
+    const wide = new Set(Array.from({ length: 30 }, (_, i) => i + 1));
+    expect(validFix({ startLine: 1, endLine: 11, code: "x" }, wide)).toBeUndefined();
+    expect(validFix({ startLine: 1, endLine: 1, code: "a\n".repeat(16) }, wide)).toBeUndefined();
+    expect(validFix({ startLine: 11, endLine: 11, code: "```\n<!-- x -->" }, lines)).toBeUndefined();
+  });
+
+  it("keeps the comment when only its suggestion is invalid, and never suggests in the summary list", () => {
+    const bad = { startLine: 100, endLine: 101, code: "x" };
+    const { inline, other } = placeFindings(
+      { summary: "", findings: [finding({ fix: bad }), finding({ severity: "low", fix: { startLine: 11, endLine: 11, code: "y" } })] },
+      files,
+    );
+    expect(inline[0]).toMatchObject({ line: 11, fix: undefined });
+    expect(other[0]!.fix).toBeUndefined();
+  });
+
+  it("the inline comment carries the suggestion block", () => {
+    const body = inlineComment(finding({ fix: { startLine: 11, endLine: 11, code: "const y = 4;" } }), "m");
+    expect(body).toContain("```suggestion\nconst y = 4;\n```");
+    expect(body).toContain("Check the suggestion before committing it.");
   });
 });
 

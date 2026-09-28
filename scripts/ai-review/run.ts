@@ -131,7 +131,14 @@ async function review() {
         commit_id: sha,
         event: "COMMENT",
         body: `AI review: ${placed.inline.length} comment${placed.inline.length === 1 ? "" : "s"} (advisory). Summary, usage and cost are in the PR comment below.`,
-        comments: placed.inline.map((f) => ({ path: f.file, line: f.line, side: "RIGHT", body: inlineComment(f, modelId) })),
+        comments: placed.inline.map((f) => ({
+          path: f.file,
+          line: f.line,
+          side: "RIGHT",
+          // A multi-line suggestion spans its whole range.
+          ...(f.fix && f.fix.startLine < f.fix.endLine ? { start_line: f.fix.startLine, start_side: "RIGHT" } : {}),
+          body: inlineComment(f, modelId),
+        })),
       });
     } catch (error) {
       // GitHub rejects the whole review if one line isn't in the diff: keep the findings in the summary.

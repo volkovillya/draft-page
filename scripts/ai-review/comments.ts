@@ -61,8 +61,9 @@ export function inlineComment(f: Finding, modelId: string): string {
     `${ICON[f.severity]} **${f.severity}** · \`${clean(f.rule)}\` · **${clean(f.title)}**`,
     "",
     clean(f.body),
+    ...(f.fix ? ["", "```suggestion", f.fix.code, "```"] : []),
     "",
-    `<sub>AI review (${shortModel(modelId)}), advisory only.</sub>`,
+    `<sub>AI review (${shortModel(modelId)}), advisory only.${f.fix ? " Check the suggestion before committing it." : ""}</sub>`,
   ].join("\n");
 }
 

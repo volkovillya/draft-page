@@ -66,7 +66,9 @@ NAME-1 Use the project's domain names:
        - threads (closed_at, closed_by, claude_requested_at), messages (seq)
        - pos_x, pos_y, target_path, excerpt, ai_jobs, outbox_events
        Don't introduce synonyms such as users, documents, slug, revisions, comments, resolved or anchor for these concepts.
-NAME-2 Every app-owned environment variable starts with DRAFTPAGE_. The only exceptions are SDK-mandated names (AUTH0_*, APP_BASE_URL, AWS_*).
+NAME-2 Every environment variable the app reads (code in src/, the worker, Docker and ECS task settings) starts with DRAFTPAGE_.
+       Exceptions: SDK-mandated names (AUTH0_*, APP_BASE_URL, AWS_*), and variables used only by GitHub workflows and CI scripts
+       (.github/, scripts/ci, scripts/ai-review, scripts/deps-audit).
 NAME-3 AWS resources are named draftpage-* and carry the Project, Environment and ManagedBy tags.
 
 DEPS — dependencies
