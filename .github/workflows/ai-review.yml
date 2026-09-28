@@ -1,0 +1,62 @@
+# Advisory AI review of pull requests on Bedrock (gpt-oss-120b, eu-north-1).
+# Runs when a PR opens or leaves draft; add the `ai-review` label to run it again.
+# One model call per run; the script posts up to 5 inline comments and one summary with
+# token usage and cost. It never blocks a merge. Rules: .github/ai-review/rules.txt.
+#
+# AWS: short-lived OIDC credentials for draftpage-github-reviewer (infra/github-review.tf),
+# which can only invoke that one model and is covered by the AI spending kill switch.
+name: AI review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: AI review (advisory)
+    # Not drafts, not forks, not Dependabot; on `labeled`, only for the ai-review label.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'ai-review')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # OIDC login to AWS
+      pull-requests: write # inline comments, the summary comment, the label
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: AWS login (OIDC)
+        id: aws
+        if: vars.AI_REVIEW_ROLE_ARN != ''
+        continue-on-error: true # the script then reports "unavailable" instead of failing
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AI_REVIEW_ROLE_ARN }}
+          role-session-name: draftpage-ai-review-${{ github.run_id }}
+          aws-region: eu-north-1
+          role-duration-seconds: 900
+      - name: Review
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABEL_ADDED: ${{ github.event.label.name }}
+          AWS_READY: ${{ steps.aws.outcome == 'success' }}
+          AI_REVIEW_MODEL_ID: ${{ vars.AI_REVIEW_MODEL_ID }}
+        run: npm run ai-review

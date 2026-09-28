@@ -108,3 +108,14 @@ variable "ai_kill_switch_usd" {
     error_message = "ai_kill_switch_usd must be at least 30, or the fixed infrastructure alone would trip it."
   }
 }
+
+variable "ai_review_model_id" {
+  description = "Bedrock model the AI pull-request review invokes in the home region (infra/github-review.tf)."
+  type        = string
+  default     = "openai.gpt-oss-120b-1:0"
+
+  validation {
+    condition     = can(regex("^[a-z0-9.:-]+$", var.ai_review_model_id))
+    error_message = "ai_review_model_id must be a Bedrock foundation model id such as openai.gpt-oss-120b-1:0."
+  }
+}

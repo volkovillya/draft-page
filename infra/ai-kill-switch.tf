@@ -1,10 +1,10 @@
 # Phase 3: a hard stop for AI spending, independent of the app's own daily limits ($0).
 #
 #   month's usage passes var.ai_kill_switch_usd ──▶ AWS Budgets action ──▶ attaches "deny Bedrock"
-#                                                                            to the worker's role
+#                                                              to the worker's and the PR reviewer's roles
 #
-# After that every AI job fails with "The AI model isn't available for this account", and the
-# rest of DraftPage keeps working. Nothing detaches it automatically, not even the next month:
+# After that every AI job fails with "The AI model isn't available for this account", the PR
+# review says "unavailable", and the rest of DraftPage keeps working. Nothing detaches it automatically, not even the next month:
 # to turn AI back on, open Billing → Budgets → draftpage-ai-kill-switch → Actions and reverse it.
 #
 # It watches the whole bill (usage before credits and tax, like the other budgets), because each
@@ -59,10 +59,10 @@ resource "aws_iam_policy" "deny_bedrock" {
 }
 
 # The identity AWS Budgets uses to run the action: it may attach or detach only that one
-# policy, and only on the worker's role.
+# policy, and only on the roles that call Bedrock (the AI worker and the PR reviewer).
 resource "aws_iam_role" "budget_kill_switch" {
   name        = "draftpage-budget-kill-switch"
-  description = "AWS Budgets uses this to attach draftpage-deny-bedrock to the AI worker"
+  description = "AWS Budgets uses this to attach draftpage-deny-bedrock to the roles that call Bedrock"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -84,10 +84,10 @@ resource "aws_iam_role_policy" "budget_kill_switch" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid      = "ToggleDenyBedrockOnWorker"
+      Sid      = "ToggleDenyBedrockOnAiRoles"
       Effect   = "Allow"
       Action   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
-      Resource = aws_iam_role.ai_worker.arn
+      Resource = [aws_iam_role.ai_worker.arn, aws_iam_role.github_reviewer.arn]
       Condition = {
         ArnEquals = { "iam:PolicyARN" = aws_iam_policy.deny_bedrock.arn }
       }
@@ -110,7 +110,7 @@ resource "aws_budgets_budget_action" "ai_kill_switch" {
   definition {
     iam_action_definition {
       policy_arn = aws_iam_policy.deny_bedrock.arn
-      roles      = [aws_iam_role.ai_worker.name]
+      roles      = [aws_iam_role.ai_worker.name, aws_iam_role.github_reviewer.name]
     }
   }
 

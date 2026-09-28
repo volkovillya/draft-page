@@ -14,8 +14,8 @@ import {
   type Report,
   stepSummary,
 } from "./report.ts";
+import { all, BOT, github, ours } from "../lib/github.ts";
 
-const BOT = "github-actions[bot]";
 const env = process.env;
 const repo = env.GITHUB_REPOSITORY ?? "";
 const sha = env.GITHUB_SHA ?? "";
@@ -25,37 +25,10 @@ function summary(text: string) {
   else console.log(text);
 }
 
-async function github(method: string, path: string, body?: unknown): Promise<unknown> {
-  const res = await fetch(`https://api.github.com${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      ...(body ? { "content-type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error(`GitHub ${method} ${path}: ${res.status}`);
-  return res.status === 204 ? null : res.json();
-}
-
-type Item = { id: number; number: number; body?: string; state?: string; user?: { login: string }; pull_request?: unknown };
-
-/** Every page of a list endpoint (100 per page). */
-async function all(path: string): Promise<Item[]> {
-  const items: Item[] = [];
-  for (let page = 1; ; page++) {
-    const batch = (await github("GET", `${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`)) as Item[];
-    items.push(...batch);
-    if (batch.length < 100) return items;
-  }
-}
-
-const ours = (i: Item) => i.user?.login === BOT && (i.body ?? "").includes(MARKER);
+const isOurs = ours(MARKER);
 
 async function updatePullRequest(number: number, report: Report) {
-  const existing = (await all(`/repos/${repo}/issues/${number}/comments`)).find(ours);
+  const existing = (await all(`/repos/${repo}/issues/${number}/comments`)).find(isOurs);
   // Stay quiet on a clean PR that never had findings.
   if (!existing && report.rows.length === 0) return;
   const body = prComment(report, env.PR_HEAD_SHA || sha);
@@ -65,7 +38,7 @@ async function updatePullRequest(number: number, report: Report) {
 
 async function updateIssue(report: Report) {
   const issues = await all(`/repos/${repo}/issues?state=all&creator=${encodeURIComponent(BOT)}`);
-  const existing = issues.find((i) => !i.pull_request && ours(i));
+  const existing = issues.find((i) => !i.pull_request && isOurs(i));
   if (report.rows.length > 0) {
     const body = issueBody(report, sha);
     if (existing) await github("PATCH", `/repos/${repo}/issues/${existing.number}`, { body, state: "open" });
