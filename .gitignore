@@ -7,6 +7,8 @@ docs/
 # Project rules for coding assistants (company-free, written for this repo)
 !/CLAUDE.md
 !/AGENTS.md
+# Route folders named like a file (e.g. src/app/api/.../review.md/) are code, not docs
+!/src/**/*.md/
 
 # dependencies
 node_modules/

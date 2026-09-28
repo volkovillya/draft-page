@@ -173,6 +173,9 @@ test.describe("pinned comment threads", () => {
     await pinComment(page, "h1", "@Claude make the headline bigger");
     const rail = page.getByRole("complementary", { name: "Comments" });
     await expect(rail).toContainText("Claude made v2", { timeout: 15_000 });
+    // Wait for the retried refresh itself before opening the menu: on a slow machine it can land
+    // just after the click and re-render the header, closing the menu mid-assertion.
+    await expect(page.getByRole("link", { name: "Open v2" })).toBeVisible({ timeout: 10_000 });
     await page.locator("header button[aria-haspopup=menu]").click();
     await expect(page.getByRole("menu", { name: "Page menu" })).toContainText("Version 2", { timeout: 10_000 });
     expect(failed).toBe(1); // the 503 really happened
