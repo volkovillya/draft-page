@@ -30,6 +30,10 @@ test.describe("signed out", () => {
 });
 
 test.describe("signed in", () => {
+  // In order, in one worker: the paging test adds 26 pages, which would push the other
+  // gallery tests' fresh pages (and the shared section) off page 1 if it ran first.
+  test.describe.configure({ mode: "default" });
+
   test("the landing page redirects to the gallery", async ({ page }) => {
     await signIn(page);
     await page.goto("/");

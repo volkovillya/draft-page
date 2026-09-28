@@ -69,10 +69,18 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # Split into shard jobs, each with its own runner, Postgres and dev server, so the slowest
+  # job sets the wall time. Playwright deals the tests out evenly by count (fullyParallel), so
+  # new tests need no assignment. More shards finish sooner but each pays ~35 s of setup and
+  # rounds up to whole billed minutes: 3 roughly halves the wall time for ~1.4x the minutes.
   e2e:
-    name: Browser tests
+    name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false # a failure in one shard still shows the other shards' results
+      matrix:
+        shard: [1, 2, 3]
     services:
       postgres:
         image: postgres:18-alpine
@@ -90,12 +98,12 @@ jobs:
           cache: npm
       - run: npm ci
       # The runner image ships Google Chrome, which playwright.config.ts uses (channel: "chrome").
-      - run: npm run test:e2e
+      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
       - name: Upload traces of failed tests
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-traces
+          name: e2e-traces-${{ matrix.shard }}
           path: test-results/
           retention-days: 3
 

@@ -173,13 +173,18 @@ test.describe("pinned comment threads", () => {
     await pinComment(page, "h1", "@Claude make the headline bigger");
     const rail = page.getByRole("complementary", { name: "Comments" });
     await expect(rail).toContainText("Claude made v2", { timeout: 15_000 });
-    // Wait for the retried refresh itself before opening the menu: on a slow machine it can land
-    // just after the click and re-render the header, closing the menu mid-assertion.
     await expect(page.getByRole("link", { name: "Open v2" })).toBeVisible({ timeout: 10_000 });
-    await page.locator("header button[aria-haspopup=menu]").click();
-    await expect(page.getByRole("menu", { name: "Page menu" })).toContainText("Version 2", { timeout: 10_000 });
+    // After the 503, Next.js recovers with a full page load. Its HTML (with "Open v2") can show
+    // before React is attached, and a click in that gap, or one just before the reload, opens
+    // nothing. So open the menu until it stays open; clicking only while it's closed.
+    const menuButton = page.locator("header button[aria-haspopup=menu]");
+    const menu = page.getByRole("menu", { name: "Page menu" });
+    await expect(async () => {
+      if (!(await menu.isVisible())) await menuButton.click();
+      await expect(menu).toContainText("Version 2", { timeout: 2_000 });
+    }).toPass({ timeout: 15_000 });
     expect(failed).toBe(1); // the 503 really happened
-    await expect(page.locator("header button[aria-haspopup=menu]")).toContainText("v1"); // and no jump to v2
+    await expect(menuButton).toContainText("v1"); // and no jump to v2
   });
 
   test("an @Claude request on a page too large for AI is refused up front, before any model call", async ({ page }) => {
@@ -263,6 +268,7 @@ test.describe("pinned comment threads", () => {
 
   test("a pin sits beside the point it marks instead of covering it", async ({ page }) => {
     await page.locator('button[aria-keyshortcuts="C"]').click();
+    await expect(page.frameLocator("iframe").locator("html[data-dp-placing]")).toHaveCount(1);
     const frameBox = (await page.locator("iframe").boundingBox())!;
     const h1 = (await page.frameLocator("iframe").locator("h1").boundingBox())!;
     const point = { x: h1.x + 20, y: h1.y + h1.height / 2 };
@@ -288,10 +294,12 @@ test.describe("pins on empty space", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await signInAndCreatePage(page, CENTRED);
     await rail(page).getByRole("button", { name: "Hide comments" }).click();
+    await page.locator('button[aria-keyshortcuts="C"]').click();
+    // A raw mouse click only lands once the frame itself is in placing mode (slow on a busy CI box).
+    await expect(page.frameLocator("iframe").locator("html[data-dp-placing]")).toHaveCount(1);
     const cardEl = page.frameLocator("iframe").locator("#card");
     const before = (await cardEl.boundingBox())!;
     // 60px to the right of the card, on the empty background.
-    await page.locator('button[aria-keyshortcuts="C"]').click();
     await page.mouse.click(before.x + before.width + 60, before.y + 80);
     const composer = page.getByRole("dialog", { name: "New comment" });
     await expect(composer).toContainText("div"); // attached to an element, not the page body

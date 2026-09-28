@@ -4,13 +4,21 @@ import { E2E_DATABASE_URL } from "./tests/e2e/global-setup";
 // Browser tests run against a separate local dev server (port 6599, own build folder, own
 // database) with the dev sign-in enabled for that process only. Your dev server on 6500 and
 // its data are never touched. Needs `npm run test:db` running.
+//
+// Parallel: every test is its own unit of work (fullyParallel), so Playwright spreads single
+// tests over the workers and, on CI, over the shard jobs (ci.yml). All workers share this one
+// server, its database and the one dev member, so each test creates its own data.
+// Workers: half the CPU cores locally, 1 per CI job (a 2-vCPU runner gains nothing from more),
+// or DRAFTPAGE_E2E_WORKERS=<n> to override.
 const PORT = 6599;
+const WORKERS = Number(process.env.DRAFTPAGE_E2E_WORKERS) || (process.env.CI ? 1 : undefined);
 
 export default defineConfig({
   testDir: "tests/e2e",
   globalSetup: "./tests/e2e/global-setup.ts",
   timeout: 60_000,
-  fullyParallel: false,
+  fullyParallel: true,
+  workers: WORKERS,
   // On CI: fail on a stray test.only, and annotate failures on the pull request.
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [["list"], ["github"]] : [["list"]],
