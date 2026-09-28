@@ -1,12 +1,11 @@
 # Phase 3 step 6: the AI worker Lambda (≈$0: 1M requests and 400k GB-seconds a month are free).
 #
-#   SQS draftpage-ai-jobs ──(trigger, step 9)──▶ draftpage-ai-worker ──signed HTTPS──▶ app /api/internal/*
-#                                                        └──(after the Paid plan upgrade)──▶ Bedrock
+#   SQS draftpage-ai-jobs ──(trigger)──▶ draftpage-ai-worker ──signed HTTPS──▶ app /api/internal/*
+#                                                └──(Converse)──▶ Bedrock (var.ai_model_id)
 #
 # It runs outside the VPC (decision D11): no NAT or endpoint needed to reach Bedrock, and it
 # never connects to the database; it reads and saves jobs through the app's internal API.
 # The code is built by `npm run build:worker` into infra/build/ai-worker.zip (not in Git).
-# Until step 9 adds the SQS trigger, nothing invokes it.
 
 locals {
   worker_name = "draftpage-ai-worker"

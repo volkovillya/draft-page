@@ -98,7 +98,7 @@ export function summaryComment(s: SummaryInput): string {
   const lines = [SUMMARY_MARKER, "### AI review", ""];
   const sha = `\`${s.sha.slice(0, 7)}\``;
   if (s.status === "unavailable") {
-    lines.push(`⚠️ AI review unavailable at ${sha}: ${s.reason ?? "unknown reason"}. Checks are unaffected.`);
+    lines.push(`⚠️ AI review unavailable at ${sha}: ${clean(s.reason ?? "unknown reason")}. Checks are unaffected.`);
   } else if (s.status === "capped") {
     lines.push(`⏸️ This PR already had ${MAX_RUNS} AI reviews, so ${sha} wasn't reviewed (cost cap).`);
   } else {
@@ -118,7 +118,7 @@ export function summaryComment(s: SummaryInput): string {
         lines.push(`- ${ICON[f.severity]} \`${clean(f.rule)}\` ${clean(f.title)} (\`${clean(f.file)}\`): ${clean(f.body)}`);
       }
     }
-    if (s.omitted?.length) lines.push("", `<sub>Not reviewed (over the size budget): ${s.omitted.join(", ")}</sub>`);
+    if (s.omitted?.length) lines.push("", `<sub>Not reviewed (over the size budget): ${s.omitted.map(clean).join(", ")}</sub>`);
   }
   lines.push(
     "",

@@ -3,7 +3,8 @@
 #   execution role  → used by ECS itself to START a task: pull the image, fetch secrets
 #                     into env vars, write logs. The app code never gets these rights.
 #   app (task) role → the identity of the running DraftPage code: sign in to the database
-#                     as draftpage_app with an IAM token, and allow the ECS Exec tunnel.
+#                     as draftpage_app with an IAM token, send AI jobs to SQS, and allow
+#                     the ECS Exec tunnel.
 # No access keys anywhere: both are assumed by the ECS service with temporary credentials.
 
 locals {

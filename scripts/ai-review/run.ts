@@ -19,7 +19,7 @@ import {
   summaryComment,
   type Usage,
 } from "./comments.ts";
-import { docsOnly, parseUnifiedDiff, selectFiles } from "./diff.ts";
+import { docsOnly, parseUnifiedDiff, planReview, selectFiles } from "./diff.ts";
 import { callReviewModel, MAX_OUTPUT_TOKENS, ModelUnavailable } from "./model.ts";
 import { buildPrompt, type Finding, parseAnswer, placeFindings } from "./review.ts";
 
@@ -70,8 +70,9 @@ async function review() {
   const sha = pull.head.sha;
   const files = parseUnifiedDiff(await pullRequestDiff(repo, number));
 
-  if (files.length === 0 || docsOnly(files.map((f) => f.path))) {
-    stepSummary("### AI review\nSkipped: only docs or lockfile changes.");
+  const plan = planReview(files, MAX_DIFF_BYTES);
+  if (plan.kind === "skip") {
+    stepSummary("### AI review\nSkipped: only docs, lockfiles or other files it doesn't review changed.");
     return;
   }
 
@@ -88,11 +89,15 @@ async function review() {
   const zero: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
 
   if (before.runs >= MAX_RUNS) return post({ status: "capped", usage: zero, totals: before });
+  if (plan.kind === "too-large") {
+    const reason = `every changed file is over the review's size budget (${plan.omitted.join(", ")})`;
+    return post({ status: "unavailable", reason, usage: zero, totals: before });
+  }
   if (env.AWS_READY !== "true") {
     return post({ status: "unavailable", reason: "the AWS login for the reviewer isn't set up or failed", usage: zero, totals: before });
   }
 
-  const { included, omitted } = selectFiles(files, MAX_DIFF_BYTES);
+  const { included, omitted } = plan;
   const prompt = buildPrompt({
     title: pull.title,
     body: pull.body ?? "",

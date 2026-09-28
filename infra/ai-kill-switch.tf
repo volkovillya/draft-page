@@ -42,7 +42,9 @@ resource "aws_budgets_budget" "ai_kill_switch" {
   }
 }
 
-# What gets attached. A Deny always wins over the worker's own permissions.
+# What gets attached. A Deny always wins over the roles' own permissions. It goes on the worker
+# and the pull-request reviewer (below); the description still says "AI worker" because
+# changing an IAM policy's description replaces the policy.
 resource "aws_iam_policy" "deny_bedrock" {
   name        = "draftpage-deny-bedrock"
   description = "Attached to the AI worker by the AI kill-switch budget: no more model calls"

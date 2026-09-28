@@ -11,6 +11,7 @@ import {
   MARKER,
   parseAudit,
   prComment,
+  updatesMainIssue,
   type Report,
   stepSummary,
 } from "./report.ts";
@@ -72,7 +73,7 @@ async function main(): Promise<number> {
   if (env.GITHUB_TOKEN && repo) {
     try {
       if (env.PR_NUMBER) await updatePullRequest(Number(env.PR_NUMBER), report);
-      else await updateIssue(report);
+      else if (updatesMainIssue(env.GITHUB_REF)) await updateIssue(report);
     } catch (error) {
       // The verdict still stands when commenting fails (e.g. a read-only token).
       console.warn(`::warning::Could not update the comment or issue: ${(error as Error).message}`);

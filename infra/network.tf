@@ -5,8 +5,9 @@
 #                     private subnets (a, b)   ← RDS (no route to or from the internet)
 #
 # No NAT Gateway (~$33/mo): the task sits in a public subnet with a public IPv4 address for
-# outbound calls (Auth0, ECR, Secrets Manager, CloudWatch), while its security group accepts
-# inbound traffic only from the API Gateway VPC Link (decision D9). RDS needs no internet.
+# outbound calls (Auth0, ECR, Secrets Manager, CloudWatch, SQS), while its security group
+# accepts inbound traffic only from the API Gateway VPC Link (decision D9). RDS needs no
+# internet. Bedrock is called by the worker Lambda outside the VPC, never by the task.
 
 locals {
   vpc_cidr = "10.20.0.0/16"
@@ -146,7 +147,9 @@ resource "aws_vpc_security_group_egress_rule" "app_https_out" {
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
-  description       = "HTTPS to Auth0, ECR, Secrets Manager, CloudWatch (later Bedrock)"
+  # The description predates the worker design (the task never calls Bedrock); changing it
+  # would only churn the rule, so it stays.
+  description = "HTTPS to Auth0, ECR, Secrets Manager, CloudWatch (later Bedrock)"
 }
 
 resource "aws_vpc_security_group_egress_rule" "app_to_db" {

@@ -4,7 +4,7 @@ DraftPage is a small web app for reviewing HTML pages. Upload a page, get versio
 
 It's a personal portfolio project for hands-on work with a containerized web app on AWS (ECS/Fargate, RDS, SQS, Lambda, Bedrock), kept deliberately small.
 
-> Status: **live on AWS (Phase 2), AI pipeline running end to end (Phase 3)** with a stand-in editor until the AWS account can call Bedrock (see [Known limitations](#known-limitations-by-design-for-now)).
+> Status: **live on AWS (Phase 2), AI edits running end to end on Amazon Bedrock (Phase 3)** with `openai.gpt-oss-120b-1:0` in eu-north-1.
 
 ## Features
 
@@ -80,9 +80,19 @@ npm test             # unit + integration (Vitest, real Postgres)
 npm run test:e2e     # browser tests (Playwright + local Chrome, own server and database)
 npm run test:image   # builds the Docker image and smoke-tests it (see below)
 npm run build:worker # bundles the AI worker Lambda into infra/build/ai-worker.zip
+npm run lint         # Biome (the ESLint TypeScript parser doesn't support TypeScript 7 yet)
 npm run typecheck
 npm run build
 ```
+
+### Pull requests and CI
+
+Every pull request and push to `main` runs `.github/workflows/ci.yml`: lint, type check, build, Terraform `fmt`/`validate` (never plan or apply), unit and browser tests against a Postgres 18 container, and repo hygiene (exact version pins, applied migrations unchanged, a secret scan). Two more workflows comment on pull requests:
+
+- **Dependency audit** (`deps-audit.yml`): `npm audit` on the lockfile, one sticky comment with fixes; fails only on high or critical issues in production dependencies. Weekly on `main`, it keeps one issue up to date.
+- **AI review** (`ai-review.yml`): one Bedrock call (gpt-oss-120b) with the diff and `.github/ai-review/rules.txt`; up to 5 inline comments, one-click suggestions for small fixes, and a summary with tokens and cost. Advisory only; add the `ai-review` label to run it again. Its AWS role (`infra/github-review.tf`) can only invoke that one model and is covered by the AI kill switch.
+
+All checks are informational on this plan: they can't block a merge. Deploys and Terraform stay manual.
 
 ### Docker
 
@@ -125,7 +135,7 @@ browser ──HTTPS──▶ API Gateway (HTTP API) ──VPC Link──▶ Clou
 | Observability | CloudWatch Logs for the app, the worker and API Gateway access (14 days), and one alarm that emails when a job reaches the dead-letter queue. | ≈ 0.10 |
 | Cost guards | Budgets, anomaly detection, hourly alarms and AI limits (see [Cost guards](#cost-guards)). | 0 |
 
-Total ≈ $29/month while running (eu-north-1 prices), ≈ $4/month paused. AI edits are extra: roughly $0.01–0.05 each with GPT-5.6 Luna.
+Total ≈ $29/month while running (eu-north-1 prices), ≈ $4/month paused. AI edits are extra: roughly $0.005–0.03 each with gpt-oss-120b ($0.15 / $0.60 per 1M tokens); an AI pull-request review costs ≈ $0.004.
 
 ### Day to day
 
@@ -156,12 +166,12 @@ reviewer: "@Claude make the heading green"
 - **Duplicates are harmless.** SQS delivers at least once. A job can only produce one version: completing a completed job returns the same version, concurrent completions are serialized by a row lock, and `(thread, base version, kind)` is unique.
 - **Failures are bounded and visible.** Temporary errors (throttling, timeouts) retry after ≈30 s and ≈2 min; the third attempt marks the job failed with a short reason shown on the thread. Permanent errors (refused, too large, invalid output) fail at once. A worker that crashes every time leaves the message in the dead-letter queue, which emails an alarm; jobs stuck over 30 minutes are failed by the relay.
 - **The AI only ever drafts.** The assistant actor can add a draft version to its own page and reply in its own thread. Publishing, resolving and deleting refuse it before touching the database.
-- **The model is behind one interface** (`HtmlEditorModel`): a Bedrock Converse editor and a deterministic fake. Page HTML, the quoted text and the instruction go to the model as clearly delimited untrusted data; results that add scripts, event handlers or `javascript:` links are rejected. Pages over 100 KiB are refused before any call (the whole page has to fit in a 32k-token reply), and each reply is capped at about 1.25× the page's size, so a small page can't turn into a huge, costly one.
-- **AI spending is capped in the app, then in AWS.** The app allows 10 `@Claude` edits per person and 30 in total in any 24 hours, and $5 of AI per calendar month. Each accepted request holds the most one attempt could cost (the biggest page in, the reply cap out: ≈ $0.05 with Luna), each retry holds another, and a finished edit's real cost replaces the last hold, so the budget can't be passed even while AWS billing lags. A request over any limit is refused with a 429 that says why and when to try again; the reviewer keeps their text. Requests are logged in `ai_requests`, which deleting a thread doesn't touch, so deleting and re-asking doesn't reset anything. Behind that, an AWS Budgets action attaches a "deny Bedrock" policy to the worker when a month's usage passes $40 (`infra/ai-kill-switch.tf`); it stays until reversed in the Budgets console.
+- **The model is behind one interface** (`HtmlEditorModel`): a Bedrock Converse editor and a deterministic fake. Page HTML, the quoted text and the instruction go to the model as clearly delimited untrusted data; results that add scripts, event handlers or `javascript:` links are rejected. Pages the model can't return whole are refused before any call: over 100 KiB, or less when the model's reply limit is lower (gpt-oss-120b: 16k tokens, so pages up to 28,800 bytes), and each reply is capped at about 1.25× the page's size, so a small page can't turn into a huge, costly one.
+- **AI spending is capped in the app, then in AWS.** The app allows 10 `@Claude` edits per person and 30 in total in any 24 hours, and $5 of AI per calendar month. Each accepted request holds the most one attempt could cost (the biggest prompt in, the model's reply cap out: ≈ $0.034 with gpt-oss-120b), each retry holds another, and a finished edit's real cost replaces the last hold, so the budget can't be passed even while AWS billing lags. A request over any limit is refused with a 429 that says why and when to try again; the reviewer keeps their text. Requests are logged in `ai_requests`, which deleting a thread doesn't touch, so deleting and re-asking doesn't reset anything. Behind that, an AWS Budgets action attaches a "deny Bedrock" policy to the worker and the pull-request reviewer when a month's usage passes $40 (`infra/ai-kill-switch.tf`); it stays until reversed in the Budgets console.
 - **The worker never touches the database** (decision D11). It runs outside the VPC, so it reaches Bedrock without a NAT Gateway (~$33/month) or a Bedrock VPC endpoint (~$8/month), and reads and saves jobs through two internal endpoints. API Gateway accepts those only when signed with the worker's IAM role, then passes the verified caller to the app, which checks it again.
 - **The UI polls** this version's threads every 2 s, only while a job is active and the tab is visible. API Gateway HTTP APIs buffer responses, so a push channel would need a separate WebSocket API; polling costs a few requests per edit.
 
-### Switching to a real model (after leaving the Free plan)
+### Switching models
 
 Order matters: the app's AI limits must be running on AWS before the worker can call a paid model.
 
@@ -178,10 +188,10 @@ Order matters: the app's AI limits must be running on AWS before the worker can 
 | Guard | What it does | Where |
 |---|---|---|
 | Daily AI limits | 10 `@Claude` edits per person, 30 in total, per rolling 24 hours | app |
-| Monthly AI budget | $5 of AI per calendar month. Each attempt holds its worst case (≤160 KiB of prompt, 32k tokens out) until the real cost is known; retries are re-checked against the budget and capped at 3 by the server; the SDK never retries on its own; timeouts aren't retried; a model without a price is refused | app |
-| Size caps | Pages over 100 KiB refused before a job is created; reply capped at ≈1.25× the page | app |
-| AI kill switch | Month's usage over $40 → a "deny Bedrock" policy on the worker (reverse it in Budgets) | `infra/ai-kill-switch.tf` |
-| Budgets | Email when a day passes $2, a month passes $35, or a month is forecast past $40 (before credits and tax) | `infra/budget.tf` |
+| Monthly AI budget | $5 of AI per calendar month. Each attempt holds its worst case (≤160 KiB of prompt, the model's reply cap out) until the real cost is known; retries are re-checked against the budget and capped at 3 by the server; the SDK never retries on its own; timeouts aren't retried; a model without a price is refused | app |
+| Size caps | Pages over 100 KiB (28,800 bytes with gpt-oss-120b) refused before a job is created; reply capped at ≈1.25× the page | app |
+| AI kill switch | Month's usage over $40 → a "deny Bedrock" policy on the worker and the pull-request reviewer (reverse it in Budgets) | `infra/ai-kill-switch.tf` |
+| Budgets | Email when a day passes $2; when a month passes $3, $5, $10, $20, $30 and $35, or is forecast past $40 (before credits and tax); and as soon as anything is charged to the card after credits | `infra/budget.tf` |
 | Anomaly detection | Daily email when a day costs ≥ $5 more than usual (needs ~10 days of history per service) | `infra/cost-guards.tf` |
 | Hourly alarms | Email within the hour: > 10,000 requests, > 1 GB served, or the database paying for extra CPU | `infra/cost-guards.tf` |
 | Database auto-start | Email whenever RDS starts; when RDS restarts a paused database on its own after 7 days, it's stopped again automatically | `infra/cost-guards.tf` |
@@ -202,7 +212,7 @@ None of these stops the fixed costs (≈ $29/month running); `npm run aws:pause`
 
 1. **Phase 1:** local app, tests, clean baseline *(done)*.
 2. **Phase 2:** AWS web deployment with Terraform (`infra/`): budget alerts, networking, Docker image, ECR, RDS PostgreSQL, Secrets Manager, IAM, ECS/Fargate, CloudWatch Logs, and HTTPS through API Gateway *(done)*.
-3. **Phase 3:** cloud AI. `ai_jobs` and a transactional outbox → SQS → Lambda → Amazon Bedrock → a new draft version plus a Claude reply *(running with the stand-in editor; Bedrock after leaving the Free plan)*.
+3. **Phase 3:** cloud AI. `ai_jobs` and a transactional outbox → SQS → Lambda → Amazon Bedrock → a new draft version plus a Claude reply *(done: gpt-oss-120b on Bedrock)*.
 4. **Phase 4:** reliability. Idempotency, retries with backoff and jitter, DLQ and timeouts are in place; next are metrics from the job table and cost reports.
 5. **Phase 5:** model evaluation. A benchmark of real edit requests to pick the cheapest model that meets the quality bar.
 
@@ -210,7 +220,8 @@ None of these stops the fixed costs (≈ $29/month running); `npm run aws:pause`
 
 - One Fargate task and no load balancer: no high availability. Deploys start the new task before stopping the old one, but a crash means a short outage until ECS replaces the task.
 - API Gateway buffers responses (no streaming) and allows 30 seconds per request.
-- New AWS accounts start with a Bedrock allowance of 0 tokens a day, even on the Paid plan, until AWS raises it. Until then, AI jobs run with the stand-in editor, which makes an invisible edit; the rest of the pipeline is real.
+- The AI model is gpt-oss-120b, chosen because the account can use it: GPT-5.6 Luna is gated (AWS Sales only) and Claude on Bedrock is waiting for access. It handles focused edits well but is weak at visual redesigns; Phase 5 compares models on real requests.
+- New AWS accounts start with a Bedrock allowance of 0 tokens a day, even on the Paid plan, until AWS raises it; the stand-in editor (`DRAFTPAGE_AI_EDITOR=fake`) keeps the rest of the pipeline testable without it.
 - Pins remember elements by position (for example "the first `div`"), so an edit that inserts elements earlier on the page can move them in the new version.
 - Follow-up `@Claude` requests in replies aren't supported yet: one thread is one request.
 - Every member with access can see every page; there are no per-page permissions yet.

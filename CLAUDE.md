@@ -8,7 +8,7 @@
 - Git hooks: `git config core.hooksPath .githooks` (once per clone; see "Banned names" below).
 
 ## Checks before a change is done
-- `npm run typecheck`, `npm test` and `npm run build` all pass.
+- `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` all pass (CI runs the same).
 - Unit and integration tests are Vitest in `tests/**/*.test.ts`. They need the test database: `npm run test:db`.
 - Anything verified in a browser becomes a Playwright spec in `tests/e2e/`. Run it with `npm run test:db && npm run test:e2e`.
 - Tests live in the repo, never only in a scratch folder.

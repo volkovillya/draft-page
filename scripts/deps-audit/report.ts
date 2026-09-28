@@ -166,6 +166,9 @@ export function prComment(report: Report, sha: string): string {
 
 export const ISSUE_TITLE = "Dependency vulnerabilities on main";
 
+/** The issue tracks main: runs on other branches (e.g. a manual run) only write the step summary. */
+export const updatesMainIssue = (ref: string | undefined) => ref === "refs/heads/main";
+
 export function issueBody(report: Report, sha: string): string {
   return [
     MARKER,
