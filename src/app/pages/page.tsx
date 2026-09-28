@@ -130,7 +130,7 @@ function EmptyState() {
 
 function GridSkeleton() {
   return (
-    <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading pages">
+    <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-busy="true" aria-label="Loading pages">
       {[0, 1, 2].map((i) => (
         <div key={i} className="overflow-hidden rounded-xl bg-panel ring-1 ring-line">
           <div className="aspect-[16/10] animate-pulse bg-hover" />

@@ -406,6 +406,7 @@ let script: string | undefined;
 
 /** The `<script>` element that runs the bridge. Built once per process. */
 export function bridgeScript(): string {
+  // biome-ignore lint/suspicious/noUselessEscapeInString: keeps this source from ever closing an inline <script> early
   script ??= "<script>(" + frameBridge.toString() + ")()<\/script>";
   return script;
 }

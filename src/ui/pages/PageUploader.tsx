@@ -126,6 +126,8 @@ export function PageUploader() {
         </div>
 
         {source === "file" ? (
+          // biome-ignore lint/a11y/noStaticElementInteractions: mouse and drag-and-drop shortcut; keyboard users reach the file input inside
+          // biome-ignore lint/a11y/useKeyWithClickEvents: same; the focusable file input handles the keyboard
           <div
             onDragOver={(e) => {
               e.preventDefault();

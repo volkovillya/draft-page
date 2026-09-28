@@ -186,7 +186,7 @@ export function ReviewCanvas({
         }
         break;
       case "key":
-        if (message.key === "Escape") escape();
+        if (message.key === "Escape") closeInnermost();
         else if (writable && !addOpen) togglePlacing();
         break;
       case "tap":
@@ -205,7 +205,7 @@ export function ReviewCanvas({
   });
 
   /** Esc: close the innermost thing that's open. */
-  const escape = useEffectEvent(() => {
+  const closeInnermost = useEffectEvent(() => {
     if (draft) setDraft(null);
     else if (offer) setOffer(null);
     else if (selectedId) setSelectedId(null);
@@ -268,7 +268,7 @@ export function ReviewCanvas({
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (addOpen) return; // the native dialog handles its own keys
     if (event.key === "Escape") {
-      escape();
+      closeInnermost();
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;

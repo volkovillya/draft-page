@@ -68,6 +68,7 @@ export function MentionTextarea({
         value={value}
         rows={rows}
         maxLength={MAX_MESSAGE}
+        // biome-ignore lint/a11y/noAutofocus: opt-in; the composer opens because the person just asked to write
         autoFocus={autoFocus}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}

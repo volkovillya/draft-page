@@ -164,7 +164,7 @@ test.describe("pinned comment threads", () => {
     // Claude's version into the menu fails. The page must recover without a manual reload.
     let failed = 0;
     await page.route(/\/pages\/[^/?]+\?n=1/, async (route) => {
-      if (route.request().headers()["rsc"] && failed === 0) {
+      if (route.request().headers().rsc && failed === 0) {
         failed += 1;
         return route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"Service Unavailable"}' });
       }

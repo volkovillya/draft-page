@@ -43,6 +43,7 @@ export function ThreadCard({
   const closed = thread.closedAt !== null;
 
   // Move focus into the popover when it opens, so Esc and Tab work from the keyboard.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run when a different thread opens in the same card
   useEffect(() => {
     closeRef.current?.focus({ preventScroll: true });
   }, [thread.id]);

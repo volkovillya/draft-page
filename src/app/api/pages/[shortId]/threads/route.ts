@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/server/db/connection";
-import { defaultVersion, getPage } from "@/server/core/pages";
+import { defaultVersion, getPage, type VersionSummary } from "@/server/core/pages";
 import { listThreads, openThread } from "@/server/core/threads";
 import { invalid, missing } from "@/server/core/failures";
 import { readJson, withMember } from "@/server/http";
@@ -14,7 +14,7 @@ export const GET = withMember(async (actor, request, { params }: Params<"shortId
   const db = getDb();
   const page = await getPage(db, actor, shortId);
 
-  let version;
+  let version: VersionSummary | undefined;
   if (n === null || n === "") {
     version = defaultVersion(page);
   } else {

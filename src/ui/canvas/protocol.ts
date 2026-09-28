@@ -57,7 +57,7 @@ export function readFrameMessage(data: unknown): FrameMessage | null {
         posX: m.posX,
         posY: m.posY,
         targetPath: targetPath || null,
-        excerpt: excerpt && excerpt.trim() ? excerpt : null,
+        excerpt: excerpt?.trim() ? excerpt : null,
         clientX: m.clientX,
         clientY: m.clientY,
       };

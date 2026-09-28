@@ -55,7 +55,7 @@ test.describe("versions, publishing and export", () => {
 
   test("the menu supports arrow keys", async ({ page }) => {
     await menuButton(page).click();
-    const items = menu(page).getByRole("menuitem");
+    const items = menu(page).locator("[role^=menuitem]");
     await expect(items.first()).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(items.nth(1)).toBeFocused();
@@ -80,7 +80,7 @@ test.describe("versions, publishing and export", () => {
     await pinComment(page, "h1", "old thread");
     await uploadVersion(page, SAMPLE_HTML_V2);
     await menuButton(page).click();
-    await menu(page).getByRole("menuitem", { name: /Version 1/ }).click();
+    await menu(page).getByRole("menuitemradio", { name: /Version 1/ }).click();
     await expect(page).toHaveURL(/\?n=1/);
     await expect(page.getByRole("status").filter({ hasText: "earlier version" })).toBeVisible();
     await expect(page.locator('button[aria-keyshortcuts="C"]')).toBeHidden();
@@ -152,7 +152,7 @@ test.describe("versions, publishing and export", () => {
     await page.getByRole("button", { name: "Publish", exact: true }).click();
     await expect(page.getByRole("button", { name: "Unpublish" })).toBeVisible();
     await menuButton(page).click();
-    const v1 = menu(page).getByRole("menuitem", { name: /Version 1/ });
+    const v1 = menu(page).getByRole("menuitemradio", { name: /Version 1/ });
     await expect(v1).toContainText("Draft");
     await page.keyboard.press("Escape");
     await page.goto(`/pages/${shortId}`);

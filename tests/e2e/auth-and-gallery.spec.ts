@@ -12,7 +12,7 @@ test.describe("signed out", () => {
   test("app pages send you to sign in", async ({ page }) => {
     const res = await page.request.get("/pages", { maxRedirects: 0 });
     expect([302, 303, 307, 308]).toContain(res.status());
-    expect(res.headers()["location"]).toContain("/auth/login");
+    expect(res.headers().location).toContain("/auth/login");
   });
 
   test("the API answers 401 without a session", async ({ page }) => {

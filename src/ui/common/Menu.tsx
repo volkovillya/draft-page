@@ -43,7 +43,7 @@ export function Menu({
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", onBlur);
-    list.current?.querySelector<HTMLElement>("[role=menuitem]:not([aria-disabled=true])")?.focus();
+    list.current?.querySelector<HTMLElement>("[role^=menuitem]:not([aria-disabled=true])")?.focus();
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey, true);
@@ -54,7 +54,7 @@ export function Menu({
   function onListKey(e: React.KeyboardEvent) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
-    const items = [...(list.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+    const items = [...(list.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
     const at = items.indexOf(document.activeElement as HTMLElement);
     const next = items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length];
     next?.focus();
@@ -123,15 +123,23 @@ export function MenuItem({
       </a>
     );
   }
+  // A checkable item (the version picker) is a radio; aria-checked is only valid there.
+  if (checked !== undefined) {
+    return (
+      <button role="menuitemradio" tabIndex={-1} type="button" onClick={onSelect} aria-checked={checked} className={cls}>
+        {body}
+      </button>
+    );
+  }
   return (
-    <button role="menuitem" tabIndex={-1} type="button" onClick={onSelect} aria-checked={checked} className={cls}>
+    <button role="menuitem" tabIndex={-1} type="button" onClick={onSelect} className={cls}>
       {body}
     </button>
   );
 }
 
 export function MenuSeparator() {
-  return <div role="separator" className="my-1 h-px bg-line" />;
+  return <hr className="my-1 h-px border-0 bg-line" />;
 }
 
 export function MenuLabel({ children }: { children: ReactNode }) {

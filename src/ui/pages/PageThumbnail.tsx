@@ -45,7 +45,7 @@ export function PageThumbnail({ versionId }: { versionId: string }) {
           sandbox="allow-scripts"
           tabIndex={-1}
           aria-hidden="true"
-          title=""
+          title="Page preview"
           style={{ width: VIEW_W, height: VIEW_H, transform: `scale(${scale})` }}
           className="pointer-events-none absolute top-0 left-0 origin-top-left border-0"
         />

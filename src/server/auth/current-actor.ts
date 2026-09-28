@@ -39,6 +39,6 @@ export async function currentActor(): Promise<MemberActor> {
 
 function displayName(user: SessionUser): string {
   const candidates = [user.name, user.given_name, user.nickname];
-  const name = candidates.find((c) => c && c.trim() && !c.includes("@"));
+  const name = candidates.find((c) => c?.trim() && !c.includes("@"));
   return (name ?? user.email!.split("@")[0]!).trim().slice(0, 100);
 }

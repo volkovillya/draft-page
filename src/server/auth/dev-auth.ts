@@ -25,5 +25,5 @@ export const DEV_USER: SessionUser = {
 
 /** Only same-site relative paths are allowed as a post-login destination. */
 export function safeReturnTo(value: string | null): string {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/pages";
+  return value?.startsWith("/") && !value.startsWith("//") ? value : "/pages";
 }

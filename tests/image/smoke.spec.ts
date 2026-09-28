@@ -28,11 +28,11 @@ test("the landing page renders with its styles and fonts", async ({ page }) => {
 test("signed-out requests go to Auth0, never to the dev sign-in", async ({ request }) => {
   const pages = await request.get("/pages", { maxRedirects: 0 });
   expect(pages.status()).toBeGreaterThanOrEqual(300);
-  expect(pages.headers()["location"]).toContain("/auth/login");
+  expect(pages.headers().location).toContain("/auth/login");
 
   const login = await request.get("/auth/login", { maxRedirects: 0 });
   expect(login.status()).toBeGreaterThanOrEqual(300);
-  const target = new URL(login.headers()["location"]!);
+  const target = new URL(login.headers().location!);
   expect(target.hostname).toMatch(/auth0\.com$/);
   expect(login.headers()["set-cookie"] ?? "").not.toContain("draftpage_dev_session");
 

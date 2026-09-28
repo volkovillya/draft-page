@@ -28,7 +28,7 @@ export function MarkerLayer({
     const items: MarkerItem[] = [];
     for (const t of threads) {
       const p = places.get(t.id);
-      if (p && p.visible) items.push({ id: t.id, number: t.number, closed: t.closed, x: p.x, y: p.y });
+      if (p?.visible) items.push({ id: t.id, number: t.number, closed: t.closed, x: p.x, y: p.y });
     }
     return clusterMarkers(items);
   }, [threads, places]);
@@ -49,6 +49,7 @@ export function MarkerLayer({
   );
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a group of marker buttons on the canvas, not a form <fieldset>
     <div className="pointer-events-none absolute inset-0 overflow-hidden" role="group" aria-label="Comment markers">
       {clusters.map((c) => (
         <Marker key={c.key} cluster={c} selectedId={selectedId} onActivate={onActivate} />
