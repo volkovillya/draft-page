@@ -1,5 +1,5 @@
 import { eq, gt, gte, sql, type SQL } from "drizzle-orm";
-import { worstCaseEditCostUsd } from "../../ai";
+import { maxAiPageBytes, worstCaseEditCostUsd } from "../../ai";
 import type { Tx } from "../db/connection";
 import { aiRequests } from "../db/tables";
 import { tooMany } from "./failures";
@@ -8,13 +8,15 @@ import { tooMany } from "./failures";
  * Caps on "@Claude" edits: how many may start in any rolling 24 hours (per person and for
  * everyone together), and what they may cost in a calendar month (UTC, like the AWS bill).
  * `reserveUsd` is the most one attempt can cost with the configured model; it's held against
- * the monthly budget until the real cost is known.
+ * the monthly budget until the real cost is known. `maxPageBytes` is the largest page the
+ * model can edit (its reply limit decides).
  */
 export type AiLimits = {
   perMember: number;
   total: number;
   monthlyBudgetUsd: number;
   reserveUsd: number;
+  maxPageBytes: number;
 };
 
 export const DEFAULT_AI_LIMITS = { perMember: 10, total: 30, monthlyBudgetUsd: 5 };
@@ -34,6 +36,7 @@ export function aiLimitsFromEnv(env: Record<string, string | undefined> = proces
       /^\d{1,5}(\.\d{1,2})?$/,
     ),
     reserveUsd: worstCaseEditCostUsd(env),
+    maxPageBytes: maxAiPageBytes(env),
   };
 }
 

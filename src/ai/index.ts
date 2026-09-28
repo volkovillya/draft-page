@@ -1,7 +1,7 @@
-import { BedrockHtmlEditor, DEFAULT_MAX_OUTPUT_TOKENS, estimateCostUsd } from "./bedrock-editor";
+import { BedrockHtmlEditor, estimateCostUsd, maxOutputTokensFor, maxPageBytesFor } from "./bedrock-editor";
 import { FakeHtmlEditor } from "./fake-editor";
 import type { HtmlEditorModel } from "./html-editor";
-import { MAX_PROMPT_BYTES } from "./prompt";
+import { MAX_AI_INPUT_BYTES, MAX_PROMPT_BYTES } from "./prompt";
 
 export { AiEditError } from "./html-editor";
 export type { HtmlEditInput, HtmlEditResult, HtmlEditorModel } from "./html-editor";
@@ -34,9 +34,15 @@ const WORST_INPUT_TOKENS = MAX_PROMPT_BYTES;
 export function worstCaseEditCostUsd(env: Record<string, string | undefined>): number {
   if ((env.DRAFTPAGE_AI_EDITOR || "fake") === "fake") return 0;
   const modelId = env.DRAFTPAGE_AI_MODEL_ID ?? "";
-  const cost = estimateCostUsd(modelId, WORST_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS);
+  const cost = estimateCostUsd(modelId, WORST_INPUT_TOKENS, maxOutputTokensFor(modelId));
   if (cost === null) {
     throw new Error(`No price for AI model "${modelId}": add it to PRICES in src/ai/bedrock-editor.ts before using it`);
   }
   return cost;
+}
+
+/** The largest page the configured editor takes: the input cap, or less when the model's reply limit can't hold it. */
+export function maxAiPageBytes(env: Record<string, string | undefined>): number {
+  if ((env.DRAFTPAGE_AI_EDITOR || "fake") === "fake") return MAX_AI_INPUT_BYTES;
+  return Math.min(MAX_AI_INPUT_BYTES, maxPageBytesFor(maxOutputTokensFor(env.DRAFTPAGE_AI_MODEL_ID ?? "")));
 }

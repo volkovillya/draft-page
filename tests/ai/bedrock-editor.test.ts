@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
-import { acceptsTemperature, BedrockHtmlEditor, estimateCostUsd, outputTokenBudget } from "@/ai/bedrock-editor";
+import {
+  acceptsTemperature,
+  BedrockHtmlEditor,
+  estimateCostUsd,
+  maxOutputTokensFor,
+  maxPageBytesFor,
+  outputTokenBudget,
+} from "@/ai/bedrock-editor";
 import { AiEditError } from "@/ai/html-editor";
 import { MAX_AI_INPUT_BYTES } from "@/ai/prompt";
 
@@ -137,6 +144,38 @@ describe("outputTokenBudget", () => {
     await editorWith(send).edit({ ...input(), html: `<html><body>${"a".repeat(30_000 - 26)}</body></html>` });
     const [command] = send.mock.calls[0] as [ConverseCommand];
     expect(command.input.inferenceConfig?.maxTokens).toBe(16_500);
+  });
+});
+
+describe("per-model reply cap", () => {
+  it("uses the model's own limit when it's lower than ours", () => {
+    expect(maxOutputTokensFor("openai.gpt-oss-120b-1:0")).toBe(16_000);
+    expect(maxOutputTokensFor("us.openai.gpt-5.6-luna")).toBe(32_000);
+    expect(maxOutputTokensFor("unknown-model")).toBe(32_000);
+  });
+
+  it("allows exactly the pages whose reply budget fits the cap", () => {
+    expect(maxPageBytesFor(16_000)).toBe(28_800);
+    expect(outputTokenBudget(28_800, 16_000)).toBe(16_000); // fits exactly
+    expect(outputTokenBudget(28_801)).toBeGreaterThan(16_000); // one byte more wouldn't
+  });
+
+  it("refuses a page too large for gpt-oss without calling the model", async () => {
+    const send = vi.fn();
+    const editor = new BedrockHtmlEditor({
+      region: "eu-north-1",
+      modelId: "openai.gpt-oss-120b-1:0",
+      client: { send } as unknown as BedrockRuntimeClient,
+    });
+    const error = await editor
+      .edit({ ...input(), html: `<html><body>${"a".repeat(28_801 - 26)}</body></html>` })
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ retryable: false, message: "This page is too large for an AI edit" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("prices gpt-oss-120b", () => {
+    expect(estimateCostUsd("openai.gpt-oss-120b-1:0", 10_000, 5_000)).toBe(0.0045); // 10k × $0.15 + 5k × $0.60 per 1M
   });
 });
 

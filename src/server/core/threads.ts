@@ -8,7 +8,6 @@ import { claudeInstructionTooLong, MAX_INSTRUCTION_LENGTH, parseClaudeRequest } 
 import { invalid, missing, notAllowed } from "./failures";
 import { requireMember, requireText, requireUuid } from "./guards";
 import { inPosRange, POS_MAX, POS_MIN } from "../../frame-bridge/range";
-import { MAX_AI_INPUT_BYTES } from "../../ai/prompt";
 
 export const MAX_MESSAGE_LENGTH = 10_000;
 export const MAX_EXCERPT_LENGTH = 500;
@@ -80,9 +79,9 @@ export async function openThread(
     });
     if (!version) throw missing("Version");
     // Refused here rather than by the worker, so it never holds any of the AI budget.
-    if (claude.requested && Number(version.htmlBytes) > MAX_AI_INPUT_BYTES) {
+    if (claude.requested && Number(version.htmlBytes) > aiLimits.maxPageBytes) {
       throw invalid(
-        `This page is too large for an AI edit (over ${MAX_AI_INPUT_BYTES / 1024} KiB). To post it as a normal comment, remove "@Claude".`,
+        `This page is too large for an AI edit (over ${Math.floor(aiLimits.maxPageBytes / 1024)} KiB). To post it as a normal comment, remove "@Claude".`,
       );
     }
     // Share-lock the page so a concurrent addVersion (which takes FOR UPDATE) can't slip in

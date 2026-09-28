@@ -18,6 +18,7 @@ const lim = (over: Partial<AiLimits> = {}): AiLimits => ({
   total: 100,
   monthlyBudgetUsd: 100,
   reserveUsd: 0.05,
+  maxPageBytes: 100 * 1024,
   ...over,
 });
 
@@ -286,12 +287,21 @@ describe("monthly AI budget", () => {
 });
 
 describe("aiLimitsFromEnv", () => {
+  it("limits the page size by the model's reply cap", () => {
+    const pageLimit = (model: string) =>
+      aiLimitsFromEnv({ DRAFTPAGE_AI_EDITOR: "bedrock", DRAFTPAGE_AI_MODEL_ID: model }).maxPageBytes;
+    expect(aiLimitsFromEnv({}).maxPageBytes).toBe(100 * 1024); // the fake: the input cap
+    expect(pageLimit("openai.gpt-oss-120b-1:0")).toBe(28_800); // 16k reply cap
+    expect(pageLimit("us.openai.gpt-5.6-luna")).toBe(67_200); // our 32k cap
+  });
+
   it("defaults to 10 per person, 30 in total and $5 a month", () => {
     expect(aiLimitsFromEnv({})).toEqual({
       perMember: 10,
       total: 30,
       monthlyBudgetUsd: 5,
       reserveUsd: 0,
+      maxPageBytes: 100 * 1024,
     });
     expect(DEFAULT_AI_LIMITS).toEqual({ perMember: 10, total: 30, monthlyBudgetUsd: 5 });
   });
@@ -331,6 +341,11 @@ describe("aiLimitsFromEnv", () => {
       DRAFTPAGE_AI_MODEL_ID: "global.anthropic.claude-haiku-4-5",
     }).reserveUsd;
     expect(haiku).toBeCloseTo(0.324, 3);
+    const gptOss = aiLimitsFromEnv({
+      DRAFTPAGE_AI_EDITOR: "bedrock",
+      DRAFTPAGE_AI_MODEL_ID: "openai.gpt-oss-120b-1:0",
+    }).reserveUsd;
+    expect(gptOss).toBeCloseTo(0.034, 3); // 160 KiB × $0.15 + its 16k reply cap × $0.60 per 1M
     // A model missing from the price table is refused rather than guessed.
     expect(() => aiLimitsFromEnv({ DRAFTPAGE_AI_EDITOR: "bedrock", DRAFTPAGE_AI_MODEL_ID: "new-model" })).toThrow(
       'No price for AI model "new-model"',

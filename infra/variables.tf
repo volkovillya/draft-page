@@ -78,13 +78,13 @@ variable "ai_editor" {
 }
 
 variable "ai_region" {
-  description = "Region the worker calls Bedrock in; empty = the home region. GPT-5.6 Luna is only sold in US regions (e.g. us-east-1)."
+  description = "Region the worker calls Bedrock in; empty = the home region (gpt-oss-120b runs in eu-north-1). GPT-5.6 Luna is only sold in US regions (e.g. us-east-1)."
   type        = string
   default     = ""
 }
 
 variable "ai_model_id" {
-  description = "Bedrock model or inference profile id for ai_editor = \"bedrock\" (empty while fake), e.g. us.openai.gpt-5.6-luna."
+  description = "Bedrock model or inference profile id for ai_editor = \"bedrock\" (empty while fake), e.g. openai.gpt-oss-120b-1:0 or us.openai.gpt-5.6-luna."
   type        = string
   default     = ""
 

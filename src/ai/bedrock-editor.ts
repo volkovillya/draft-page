@@ -10,14 +10,23 @@ const MIN_OUTPUT_TOKENS = 8000;
 const DEFAULT_TIMEOUT_MS = 300_000;
 
 /**
- * USD per 1M tokens, matched by substring so regional/inference-profile prefixes still hit.
- * Haiku: AWS price list, global profile (2026-09-25). Luna isn't in the price list yet; this is
- * the post-July-2026 price quoted by third parties. Check the Bedrock pricing page when switching.
+ * Per model: USD per 1M tokens, and the longest reply it may write (its own limit, or our cap).
+ * Matched by substring so regional/inference-profile prefixes still hit.
+ * gpt-oss-120b: AWS price list, us-east-1 and eu-north-1 (2026-09-28); 16K output (model card).
+ * Luna: model card, in-Region/Geo (2026-09-28). Haiku: AWS price list, global profile (2026-09-25).
  */
-const PRICES: { match: string; input: number; output: number }[] = [
-  { match: "gpt-5.6-luna", input: 0.22, output: 1.32 },
-  { match: "claude-haiku-4-5", input: 1.0, output: 5.0 },
+const MODELS: { match: string; input: number; output: number; maxOutputTokens: number }[] = [
+  { match: "gpt-oss-120b", input: 0.15, output: 0.6, maxOutputTokens: 16_000 },
+  { match: "gpt-5.6-luna", input: 0.22, output: 1.32, maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS },
+  { match: "claude-haiku-4-5", input: 1.0, output: 5.0, maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS },
 ];
+
+const modelInfo = (modelId: string) => MODELS.find((m) => modelId.includes(m.match));
+
+/** The reply cap for a model: its own limit when it has a lower one than ours. */
+export function maxOutputTokensFor(modelId: string): number {
+  return modelInfo(modelId)?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
 
 /**
  * OpenAI's reasoning models on Bedrock reject a temperature other than the default, so it's
@@ -47,7 +56,7 @@ const UNAVAILABLE_NAMES = new Set(["AccessDeniedException", "ValidationException
 const NETWORK_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EPIPE"]);
 
 export function estimateCostUsd(modelId: string, inputTokens: number | null, outputTokens: number | null): number | null {
-  const price = PRICES.find((p) => modelId.includes(p.match));
+  const price = modelInfo(modelId);
   if (!price || inputTokens === null || outputTokens === null) return null;
   const usd = (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
   return Math.round(usd * 1e6) / 1e6;
@@ -61,6 +70,14 @@ export function estimateCostUsd(modelId: string, inputTokens: number | null, out
 export function outputTokenBudget(pageBytes: number, max = DEFAULT_MAX_OUTPUT_TOKENS): number {
   const pageTokens = Math.ceil(pageBytes / 3);
   return Math.min(max, Math.max(MIN_OUTPUT_TOKENS, Math.ceil(pageTokens * 1.25) + 4000));
+}
+
+/**
+ * The largest page whose reply budget still fits under the cap: above it, even an unchanged page
+ * couldn't come back whole, so the edit is refused before it costs anything. 16k: 28,800 bytes.
+ */
+export function maxPageBytesFor(maxOutputTokens: number): number {
+  return Math.floor((maxOutputTokens - 4000) / 1.25) * 3;
 }
 
 /** Maps SDK/network failures to user-safe errors; the original error (and its request id) is dropped. */
@@ -111,12 +128,15 @@ export class BedrockHtmlEditor implements HtmlEditorModel {
     // through the job queue, where the monthly AI budget counts each attempt.
     this.client = options.client ?? new BedrockRuntimeClient({ region: options.region, maxAttempts: 1 });
     this.modelId = options.modelId;
-    this.maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    this.maxOutputTokens = options.maxOutputTokens ?? maxOutputTokensFor(options.modelId);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async edit(input: HtmlEditInput): Promise<HtmlEditResult> {
     assertInputSize(input.html);
+    if (byteLength(input.html) > maxPageBytesFor(this.maxOutputTokens)) {
+      throw new AiEditError("This page is too large for an AI edit", false);
+    }
     const { system, user } = buildEditPrompt(input);
     assertPromptSize({ system, user });
     const started = performance.now();
