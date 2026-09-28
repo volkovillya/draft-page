@@ -19,6 +19,14 @@ const PRICES: { match: string; input: number; output: number }[] = [
   { match: "claude-haiku-4-5", input: 1.0, output: 5.0 },
 ];
 
+/**
+ * OpenAI's reasoning models on Bedrock reject a temperature other than the default, so it's
+ * sent only to the others (Claude), where 0 keeps edits close to the request.
+ */
+export function acceptsTemperature(modelId: string): boolean {
+  return !modelId.includes("openai.");
+}
+
 const BUSY = "The AI service is busy or unavailable right now";
 const TOO_SLOW = "The model took too long to finish this edit";
 /**
@@ -120,7 +128,10 @@ export class BedrockHtmlEditor implements HtmlEditorModel {
           modelId: this.modelId,
           system: [{ text: system }],
           messages: [{ role: "user", content: [{ text: user }] }],
-          inferenceConfig: { maxTokens: outputTokenBudget(byteLength(input.html), this.maxOutputTokens), temperature: 0 },
+          inferenceConfig: {
+            maxTokens: outputTokenBudget(byteLength(input.html), this.maxOutputTokens),
+            ...(acceptsTemperature(this.modelId) ? { temperature: 0 } : {}),
+          },
         }),
         { abortSignal: AbortSignal.timeout(this.timeoutMs) },
       );

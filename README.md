@@ -167,7 +167,7 @@ Order matters: the app's AI limits must be running on AWS before the worker can 
 
 1. **Deploy first.** `npm run aws:deploy` with the code that has the daily limits and the monthly AI budget (migrations `0004`, `0005`).
 2. **Check the model from the account:** a tiny `aws bedrock-runtime converse --profile draftpage --region <region> --model-id <id> …` call. Note the exact id, whether `temperature` is accepted, and the price on the Bedrock pricing page (update `PRICES` in `src/ai/bedrock-editor.ts` if it differs).
-3. **Allow exactly that model:** add `bedrock:InvokeModel` for its foundation-model ARN to the worker role in `infra/lambda.tf` (for an inference profile: the profile ARN plus the model ARNs, with a `bedrock:InferenceProfileArn` condition). Never `*`.
+3. **Permissions come with the switch:** with `ai_editor = "bedrock"`, `infra/lambda.tf` gives the worker `bedrock:InvokeModel` on exactly that model. For an inference profile, Terraform reads the profile's model ARNs from AWS at plan time and allows them only through that profile (a `bedrock:InferenceProfileArn` condition). Check the three `Invoke…` statements in the plan.
 4. **Switch:** in `infra/terraform.tfvars` set `ai_editor = "bedrock"`, `ai_model_id = "<id>"` and, for a model outside the home region, `ai_region` (GPT-5.6 Luna: `us-east-1`). Plan + apply: this updates the Lambda and the app together, so the app prices each edit's hold for the monthly budget.
 5. **Try one edit** and read `/aws/lambda/draftpage-ai-worker` for its tokens, cost and latency.
 6. **After the first Bedrock charge shows up** in Cost Explorer, note the service name it's billed under and narrow `infra/ai-kill-switch.tf` to AI costs only.

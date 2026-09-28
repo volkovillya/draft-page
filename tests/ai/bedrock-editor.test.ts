@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
-import { BedrockHtmlEditor, estimateCostUsd, outputTokenBudget } from "@/ai/bedrock-editor";
+import { acceptsTemperature, BedrockHtmlEditor, estimateCostUsd, outputTokenBudget } from "@/ai/bedrock-editor";
 import { AiEditError } from "@/ai/html-editor";
 import { MAX_AI_INPUT_BYTES } from "@/ai/prompt";
 
@@ -56,7 +56,7 @@ describe("BedrockHtmlEditor", () => {
 
     const [command, options] = send.mock.calls[0] as [ConverseCommand, { abortSignal: AbortSignal }];
     expect(command.input.modelId).toBe(LUNA);
-    expect(command.input.inferenceConfig).toEqual({ maxTokens: 8000, temperature: 0 }); // small page: the floor
+    expect(command.input.inferenceConfig).toEqual({ maxTokens: 8000 }); // small page: the floor; no temperature for OpenAI
     expect(command.input.system?.[0]?.text).toContain("UNTRUSTED DATA");
     expect(command.input.messages?.[0]?.content?.[0]?.text).toContain(`<page_html>\n${PAGE}\n</page_html>`);
     expect(options.abortSignal).toBeInstanceOf(AbortSignal);
@@ -137,6 +137,14 @@ describe("outputTokenBudget", () => {
     await editorWith(send).edit({ ...input(), html: `<html><body>${"a".repeat(30_000 - 26)}</body></html>` });
     const [command] = send.mock.calls[0] as [ConverseCommand];
     expect(command.input.inferenceConfig?.maxTokens).toBe(16_500);
+  });
+});
+
+describe("acceptsTemperature", () => {
+  it("leaves it out for OpenAI models and sends it to Claude", () => {
+    expect(acceptsTemperature("us.openai.gpt-5.6-luna")).toBe(false);
+    expect(acceptsTemperature("openai.gpt-oss-120b-1:0")).toBe(false);
+    expect(acceptsTemperature("us.anthropic.claude-haiku-4-5-20251001-v1:0")).toBe(true);
   });
 });
 

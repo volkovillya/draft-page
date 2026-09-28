@@ -57,7 +57,55 @@ data "aws_iam_policy_document" "ai_worker" {
     actions   = ["execute-api:Invoke"]
     resources = ["${aws_apigatewayv2_api.web.execution_arn}/$default/POST/api/internal/ai-jobs/*"]
   }
-  # Bedrock (bedrock:InvokeModel on one model) is added with the real model, after the upgrade.
+  # The one configured model, only while ai_editor = "bedrock". Converse needs bedrock:InvokeModel.
+  # Through an inference profile (us.…): the profile itself, plus its models in each region
+  # it routes to, but only when the call goes through that profile.
+  dynamic "statement" {
+    for_each = local.ai_profile_arn == null ? [] : [1]
+    content {
+      sid       = "InvokeThroughProfile"
+      actions   = ["bedrock:InvokeModel"]
+      resources = [local.ai_profile_arn]
+    }
+  }
+  dynamic "statement" {
+    for_each = local.ai_profile_arn == null ? [] : [1]
+    content {
+      sid       = "InvokeProfileModels"
+      actions   = ["bedrock:InvokeModel"]
+      resources = local.ai_profile_model_arns
+      condition {
+        test     = "StringEquals"
+        variable = "bedrock:InferenceProfileArn"
+        values   = [local.ai_profile_arn]
+      }
+    }
+  }
+  # A model called directly, in ai_region only.
+  dynamic "statement" {
+    for_each = local.ai_bedrock && local.ai_profile_arn == null ? [1] : []
+    content {
+      sid       = "InvokeModelDirectly"
+      actions   = ["bedrock:InvokeModel"]
+      resources = ["arn:aws:bedrock:${local.ai_region}::foundation-model/${var.ai_model_id}"]
+    }
+  }
+}
+
+locals {
+  ai_bedrock = var.ai_editor == "bedrock"
+  ai_region  = var.ai_region != "" ? var.ai_region : var.region
+  # Cross-Region inference profile ids start with a geography (a model id like openai.gpt-5.6-luna doesn't).
+  ai_uses_profile = local.ai_bedrock && can(regex("^(us|us-gov|eu|apac|jp|au|ca|global)\\.", var.ai_model_id))
+  ai_profile_arn  = local.ai_uses_profile ? data.aws_bedrock_inference_profile.ai[0].inference_profile_arn : null
+  # AWS's own list of the models behind the profile (one per destination region), read at plan time.
+  ai_profile_model_arns = local.ai_uses_profile ? data.aws_bedrock_inference_profile.ai[0].models[*].model_arn : []
+}
+
+data "aws_bedrock_inference_profile" "ai" {
+  count                = local.ai_uses_profile ? 1 : 0
+  region               = local.ai_region
+  inference_profile_id = var.ai_model_id
 }
 
 resource "aws_iam_role_policy" "ai_worker" {

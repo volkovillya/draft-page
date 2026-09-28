@@ -84,9 +84,14 @@ variable "ai_region" {
 }
 
 variable "ai_model_id" {
-  description = "Bedrock model or inference profile id for ai_editor = \"bedrock\" (empty while fake)."
+  description = "Bedrock model or inference profile id for ai_editor = \"bedrock\" (empty while fake), e.g. us.openai.gpt-5.6-luna."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.ai_editor != "bedrock" || can(regex("^[a-z0-9.:-]+$", var.ai_model_id))
+    error_message = "ai_editor = \"bedrock\" needs ai_model_id: a Bedrock model or inference profile id such as us.openai.gpt-5.6-luna."
+  }
 }
 
 variable "ai_kill_switch_usd" {

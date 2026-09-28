@@ -49,9 +49,10 @@ resource "aws_iam_policy" "deny_bedrock" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid      = "AiSpendingKillSwitch"
-      Effect   = "Deny"
-      Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:Converse", "bedrock:ConverseStream"]
+      Sid    = "AiSpendingKillSwitch"
+      Effect = "Deny"
+      # Every Bedrock action, including the OpenAI-style bedrock-mantle endpoint, so no route is left open.
+      Action   = ["bedrock:*", "bedrock-mantle:*"]
       Resource = "*"
     }]
   })
