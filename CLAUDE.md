@@ -11,6 +11,7 @@
 - `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` all pass (CI runs the same).
 - Unit and integration tests are Vitest in `tests/**/*.test.ts`. They need the test database: `npm run test:db`.
 - Anything verified in a browser becomes a Playwright spec in `tests/e2e/`. Run it with `npm run test:db && npm run test:e2e`.
+- New e2e tests must be independent (they run in parallel): see README → Tests.
 - Tests live in the repo, never only in a scratch folder.
 
 ## Rules

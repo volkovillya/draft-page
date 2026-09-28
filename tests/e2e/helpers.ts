@@ -2,6 +2,12 @@ import { expect, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL } from "./global-setup";
 
+// The e2e tests run in parallel, in any order, against one server, database and dev member
+// (README → Tests). So every test signs in and creates its own page with these helpers, never
+// counts or expects the absence of other pages, and never relies on another test having run.
+// A group that must stay in order in one worker uses test.describe.configure({ mode: "default" })
+// with a comment saying why; mode "serial" only when later tests need an earlier one's result.
+
 /** Signs in with the dev sign-in (e2e server only). */
 export async function signIn(page: Page, returnTo = "/pages") {
   await page.goto(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);

@@ -85,9 +85,17 @@ npm run typecheck
 npm run build
 ```
 
+Browser tests run in parallel against one e2e server and database. Locally Playwright uses half your CPU cores as workers; set `DRAFTPAGE_E2E_WORKERS=2` (for example) to change that. On CI the suite is split over 3 shard jobs with 1 worker each, in `.github/workflows/ci.yml`. Playwright deals single tests out to workers and shards by itself, so a new test needs no assignment. To run one spec or one test: `npm run test:e2e -- tests/e2e/threads.spec.ts` or `npm run test:e2e -- -g "survive a reload"`.
+
+Writing e2e tests (they run at the same time as each other, in any order):
+- Each test stands alone. It signs in and creates its own page, threads and versions (the helpers in `tests/e2e/helpers.ts` do this), and it never uses another test's data.
+- Never assume global state. All tests share one dev member, so don't count the gallery's pages or expect other pages to be absent. "No open comments" is fine only on a page the test just created.
+- Never depend on the order of tests. If a group really has to run in order in one worker, because it changes something global the way the gallery paging test adds 26 pages, add `test.describe.configure({ mode: "default" })` to that group and say why in a comment. Use `mode: "serial"` only when later tests need an earlier test's result, since one failure then skips the rest. Avoid both when you can.
+- Wait for a visible state (`expect(...)`), not for time. On a busy CI machine the app is slower than on your laptop.
+
 ### Pull requests and CI
 
-Every pull request and push to `main` runs `.github/workflows/ci.yml`: lint, type check, build, Terraform `fmt`/`validate` (never plan or apply), unit and browser tests against a Postgres 18 container, and repo hygiene (exact version pins, applied migrations unchanged, a secret scan). Two more workflows comment on pull requests:
+Every pull request and push to `main` runs `.github/workflows/ci.yml`: lint, type check, build, Terraform `fmt`/`validate` (never plan or apply), unit tests and browser tests (3 parallel shards) against Postgres 18 containers, and repo hygiene (exact version pins, applied migrations unchanged, a secret scan). Two more workflows comment on pull requests:
 
 - **Dependency audit** (`deps-audit.yml`): `npm audit` on the lockfile, one sticky comment with fixes; fails only on high or critical issues in production dependencies. Weekly on `main`, it keeps one issue up to date.
 - **AI review** (`ai-review.yml`): one Bedrock call (gpt-oss-120b) with the diff and `.github/ai-review/rules.txt`; up to 5 inline comments, one-click suggestions for small fixes, and a summary with tokens and cost. Advisory only; add the `ai-review` label to run it again. Its AWS role (`infra/github-review.tf`) can only invoke that one model and is covered by the AI kill switch.
