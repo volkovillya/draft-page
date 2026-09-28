@@ -11,7 +11,9 @@ export default defineConfig({
   globalSetup: "./tests/e2e/global-setup.ts",
   timeout: 60_000,
   fullyParallel: false,
-  reporter: [["list"]],
+  // On CI: fail on a stray test.only, and annotate failures on the pull request.
+  forbidOnly: !!process.env.CI,
+  reporter: process.env.CI ? [["list"], ["github"]] : [["list"]],
   use: {
     baseURL: `http://localhost:${PORT}`,
     // Uses the locally installed Google Chrome, so no browser download is needed.
